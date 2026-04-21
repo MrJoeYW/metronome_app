@@ -1,5 +1,5 @@
 # 极简沉浸式节拍器 (Simple Immersive Metronome)
-
+![alt text](assets/images/demo.jpg)
 ## 项目背景 (Motivation)
 做这个项目的起因是因为市面上很难找到纯净且好用的节拍器应用（多数带有广告或功能过于繁杂）。因此，借助 AI 直接按照自己的需求生成了一个干净、专一的节拍器，旨在提供无干扰的沉浸式练琴体验。
 
