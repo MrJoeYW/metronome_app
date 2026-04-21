@@ -35,4 +35,8 @@ flutter build apk
 生成的 APK 文件可以在 `build/app/outputs/flutter-apk/app-release.apk` 找到。
 
 ---
+
+好吧怕你迷路直接打包好了，直接下载就行了，but只有安卓版
+https://github.com/MrJoeYW/metronome_app/releases/tag/v1.0.0
+
 尽情享受纯粹的练琴时光吧！
