@@ -826,7 +826,7 @@ class BpmDial extends StatefulWidget {
 }
 
 class _BpmDialState extends State<BpmDial> with TickerProviderStateMixin {
-  static const double _dragSensitivity = 0.82;
+  static const double _dragSensitivity = 0.62;
 
   late final AnimationController _inertiaController;
   late final AnimationController _tapFlashController;
@@ -881,68 +881,41 @@ class _BpmDialState extends State<BpmDial> with TickerProviderStateMixin {
     final flashProgress = Curves.easeOutCubic.transform(
       _tapFlashController.value,
     );
-    final flashAlpha = (1 - flashProgress) * 0.36;
-    final flashScale = 0.88 + (flashProgress * 0.42);
+    final flashAlpha = (1 - flashProgress) * 0.72;
 
     return SizedBox.square(
       dimension: widget.size,
       child: Stack(
         alignment: Alignment.center,
         children: [
-          GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onPanStart: _handlePanStart,
-            onPanUpdate: _handlePanUpdate,
-            onPanEnd: _handlePanEnd,
-            onPanCancel: _handlePanCancel,
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                boxShadow: [
-                  BoxShadow(
-                    blurRadius: 52,
-                    spreadRadius: 4 + (widget.pulseAmount * 6),
-                    color: const Color(
-                      0xFF19F0C1,
-                    ).withValues(alpha: 0.08 + (widget.pulseAmount * 0.06)),
-                  ),
-                ],
-              ),
-              child: CustomPaint(
-                painter: BpmDialPainter(
-                  progress: progress.clamp(0, 1),
-                  pulseAmount: widget.pulseAmount,
-                  isDragging: _isDragging || _inertiaController.isAnimating,
-                ),
-              ),
-            ),
-          ),
-          IgnorePointer(
-            child: Transform.scale(
-              scale: flashScale,
-              child: Container(
-                width: centerButtonSize + 26,
-                height: centerButtonSize + 26,
+          Positioned.fill(
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onPanStart: _handlePanStart,
+              onPanUpdate: _handlePanUpdate,
+              onPanEnd: _handlePanEnd,
+              onPanCancel: _handlePanCancel,
+              child: DecoratedBox(
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  gradient: RadialGradient(
-                    colors: [
-                      const Color(0xFF19F0C1).withValues(alpha: flashAlpha),
-                      const Color(
-                        0xFF19F0C1,
-                      ).withValues(alpha: flashAlpha * 0.28),
-                      Colors.transparent,
-                    ],
-                  ),
                   boxShadow: [
                     BoxShadow(
-                      blurRadius: 42,
-                      spreadRadius: 4,
+                      blurRadius: 52,
+                      spreadRadius: 4 + (widget.pulseAmount * 6),
                       color: const Color(
                         0xFF19F0C1,
-                      ).withValues(alpha: flashAlpha * 0.9),
+                      ).withValues(alpha: 0.08 + (widget.pulseAmount * 0.06)),
                     ),
                   ],
+                ),
+                child: SizedBox.expand(
+                  child: CustomPaint(
+                    painter: BpmDialPainter(
+                      progress: progress.clamp(0, 1),
+                      pulseAmount: widget.pulseAmount,
+                      isDragging: _isDragging || _inertiaController.isAnimating,
+                    ),
+                  ),
                 ),
               ),
             ),
@@ -967,7 +940,9 @@ class _BpmDialState extends State<BpmDial> with TickerProviderStateMixin {
                     ],
                   ),
                   border: Border.all(
-                    color: Colors.white.withValues(alpha: 0.08),
+                    color: Colors.white.withValues(
+                      alpha: 0.08 + (flashAlpha * 0.16),
+                    ),
                   ),
                   boxShadow: [
                     BoxShadow(
@@ -977,105 +952,144 @@ class _BpmDialState extends State<BpmDial> with TickerProviderStateMixin {
                     ),
                   ],
                 ),
-                child: Center(
-                  child: LayoutBuilder(
-                    builder: (context, constraints) {
-                      final compactCenter = constraints.maxWidth < 132;
-                      final bpmFontSize = constraints.maxWidth * 0.28;
-
-                      return FittedBox(
-                        fit: BoxFit.scaleDown,
-                        child: Padding(
-                          padding: EdgeInsets.symmetric(
-                            horizontal: compactCenter ? 8 : 12,
-                            vertical: compactCenter ? 10 : 14,
-                          ),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              FittedBox(
-                                fit: BoxFit.scaleDown,
-                                child: Text(
-                                  _displayBpm.round().toString(),
-                                  style: Theme.of(context)
-                                      .textTheme
-                                      .displaySmall
-                                      ?.copyWith(
-                                        fontSize: bpmFontSize,
-                                        fontWeight: FontWeight.w900,
-                                        letterSpacing: -2.2,
-                                        fontFeatures: const [
-                                          ui.FontFeature.tabularFigures(),
-                                        ],
-                                      ),
-                                ),
-                              ),
-                              SizedBox(height: compactCenter ? 2 : 4),
-                              Text(
-                                'BPM',
-                                style: Theme.of(context).textTheme.labelMedium
-                                    ?.copyWith(
-                                      fontSize: compactCenter ? 10 : 12,
-                                      letterSpacing: compactCenter ? 2.1 : 2.8,
-                                      color: Colors.white.withValues(
-                                        alpha: 0.58,
-                                      ),
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                              ),
-                              SizedBox(height: compactCenter ? 8 : 10),
-                              Container(
-                                padding: EdgeInsets.symmetric(
-                                  horizontal: compactCenter ? 8 : 10,
-                                  vertical: compactCenter ? 5 : 6,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: const Color(
-                                    0xFF19F0C1,
-                                  ).withValues(alpha: 0.14),
-                                  borderRadius: BorderRadius.circular(999),
-                                  border: Border.all(
-                                    color: const Color(
-                                      0xFF19F0C1,
-                                    ).withValues(alpha: 0.26),
-                                  ),
-                                ),
-                                child: FittedBox(
-                                  fit: BoxFit.scaleDown,
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Icon(
-                                        Icons.touch_app_rounded,
-                                        size: compactCenter ? 12 : 14,
-                                        color: const Color(0xFF19F0C1),
-                                      ),
-                                      SizedBox(width: compactCenter ? 4 : 6),
-                                      Text(
-                                        'TAP TEMPO',
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .labelSmall
-                                            ?.copyWith(
-                                              fontSize: compactCenter
-                                                  ? 10
-                                                  : null,
-                                              color: const Color(0xFF19F0C1),
-                                              fontWeight: FontWeight.w800,
-                                              letterSpacing: compactCenter
-                                                  ? 0.8
-                                                  : 1.1,
-                                            ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            ],
+                child: ClipOval(
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      IgnorePointer(
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            gradient: RadialGradient(
+                              center: const Alignment(0, -0.08),
+                              radius: 0.95,
+                              colors: [
+                                const Color(
+                                  0xFFE6FFF8,
+                                ).withValues(alpha: flashAlpha * 0.34),
+                                const Color(
+                                  0xFF19F0C1,
+                                ).withValues(alpha: flashAlpha * 0.48),
+                                const Color(
+                                  0xFF19F0C1,
+                                ).withValues(alpha: flashAlpha * 0.14),
+                                Colors.transparent,
+                              ],
+                            ),
                           ),
                         ),
-                      );
-                    },
+                      ),
+                      Center(
+                        child: LayoutBuilder(
+                          builder: (context, constraints) {
+                            final compactCenter = constraints.maxWidth < 132;
+                            final bpmFontSize = constraints.maxWidth * 0.28;
+
+                            return FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Padding(
+                                padding: EdgeInsets.symmetric(
+                                  horizontal: compactCenter ? 8 : 12,
+                                  vertical: compactCenter ? 10 : 14,
+                                ),
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    FittedBox(
+                                      fit: BoxFit.scaleDown,
+                                      child: Text(
+                                        _displayBpm.round().toString(),
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .displaySmall
+                                            ?.copyWith(
+                                              fontSize: bpmFontSize,
+                                              fontWeight: FontWeight.w900,
+                                              letterSpacing: -2.2,
+                                              fontFeatures: const [
+                                                ui.FontFeature.tabularFigures(),
+                                              ],
+                                            ),
+                                      ),
+                                    ),
+                                    SizedBox(height: compactCenter ? 2 : 4),
+                                    Text(
+                                      'BPM',
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .labelMedium
+                                          ?.copyWith(
+                                            fontSize: compactCenter ? 10 : 12,
+                                            letterSpacing: compactCenter
+                                                ? 2.1
+                                                : 2.8,
+                                            color: Colors.white.withValues(
+                                              alpha: 0.58,
+                                            ),
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                    ),
+                                    SizedBox(height: compactCenter ? 8 : 10),
+                                    Container(
+                                      padding: EdgeInsets.symmetric(
+                                        horizontal: compactCenter ? 8 : 10,
+                                        vertical: compactCenter ? 5 : 6,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: const Color(
+                                          0xFF19F0C1,
+                                        ).withValues(alpha: 0.14),
+                                        borderRadius: BorderRadius.circular(
+                                          999,
+                                        ),
+                                        border: Border.all(
+                                          color: const Color(
+                                            0xFF19F0C1,
+                                          ).withValues(alpha: 0.26),
+                                        ),
+                                      ),
+                                      child: FittedBox(
+                                        fit: BoxFit.scaleDown,
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Icon(
+                                              Icons.touch_app_rounded,
+                                              size: compactCenter ? 12 : 14,
+                                              color: const Color(0xFF19F0C1),
+                                            ),
+                                            SizedBox(
+                                              width: compactCenter ? 4 : 6,
+                                            ),
+                                            Text(
+                                              'TAP TEMPO',
+                                              style: Theme.of(context)
+                                                  .textTheme
+                                                  .labelSmall
+                                                  ?.copyWith(
+                                                    fontSize: compactCenter
+                                                        ? 10
+                                                        : null,
+                                                    color: const Color(
+                                                      0xFF19F0C1,
+                                                    ),
+                                                    fontWeight: FontWeight.w800,
+                                                    letterSpacing: compactCenter
+                                                        ? 0.8
+                                                        : 1.1,
+                                                  ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -1211,13 +1225,13 @@ class _BpmDialState extends State<BpmDial> with TickerProviderStateMixin {
     );
   }
 
-  double get _centerButtonSize => widget.size * 0.48;
+  double get _centerButtonSize => widget.size * 0.44;
 
   bool _isPointOnRotationRing(Offset localPosition) {
     final center = Offset(widget.size / 2, widget.size / 2);
     final distance = (localPosition - center).distance;
-    final innerRadius = (_centerButtonSize / 2) + 10;
-    final outerRadius = (widget.size / 2) + 8;
+    final innerRadius = (_centerButtonSize / 2) + 12;
+    final outerRadius = (widget.size / 2) - 2;
     return distance >= innerRadius && distance <= outerRadius;
   }
 
@@ -1247,68 +1261,46 @@ class BpmDialPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final center = size.center(Offset.zero);
     final outerRadius = size.width / 2;
-    final trackRadius = outerRadius - 30;
-    final interactionAlpha = isDragging ? 1.0 : 0.72;
-    const startAngle = math.pi * 0.75;
-    const sweepAngle = math.pi * 1.5;
+    final trackRadius = outerRadius - 32;
+    final interactionAlpha = isDragging ? 1.0 : 0.74;
+    const startAngle = -math.pi / 2;
+    const sweepAngle = math.pi * 2;
 
     final outerPaint = Paint()
       ..shader = RadialGradient(
         colors: [
-          const Color(0xFF18324A).withValues(alpha: 0.96),
-          const Color(0xFF08111B).withValues(alpha: 0.98),
+          const Color(0xFF13253A).withValues(alpha: 0.96),
+          const Color(0xFF08111B).withValues(alpha: 0.99),
         ],
       ).createShader(Rect.fromCircle(center: center, radius: outerRadius));
     canvas.drawCircle(center, outerRadius, outerPaint);
 
-    final innerPaint = Paint()
-      ..color = Colors.white.withValues(alpha: 0.04 + (pulseAmount * 0.03));
-    canvas.drawCircle(center, outerRadius - 20, innerPaint);
-
-    final rimPaint = Paint()
+    final ringGlowPaint = Paint()
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.4
-      ..color = Colors.white.withValues(
-        alpha: 0.08 + (0.03 * interactionAlpha),
-      );
-    canvas.drawCircle(center, outerRadius - 1.4, rimPaint);
+      ..strokeWidth = 34
+      ..color = const Color(
+        0xFF5ED7FF,
+      ).withValues(alpha: 0.06 + (0.04 * interactionAlpha))
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 18);
+    canvas.drawCircle(center, trackRadius, ringGlowPaint);
 
     final trackPaint = Paint()
       ..color = const Color(
-        0xFF16324A,
-      ).withValues(alpha: 0.86 + (0.08 * interactionAlpha))
+        0xFF1A3650,
+      ).withValues(alpha: 0.94 + (0.04 * interactionAlpha))
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 24
+      ..strokeWidth = 18
       ..strokeCap = StrokeCap.round;
-    canvas.drawArc(
-      Rect.fromCircle(center: center, radius: trackRadius),
-      startAngle,
-      sweepAngle,
-      false,
-      trackPaint,
-    );
-
-    final trackHighlightPaint = Paint()
-      ..color = const Color(
-        0xFF5ED7FF,
-      ).withValues(alpha: 0.10 + (0.06 * interactionAlpha))
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 26
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 12);
-    canvas.drawArc(
-      Rect.fromCircle(center: center, radius: trackRadius),
-      startAngle,
-      sweepAngle,
-      false,
-      trackHighlightPaint,
-    );
+    canvas.drawCircle(center, trackRadius, trackPaint);
 
     final progressPaint = Paint()
       ..shader = const SweepGradient(
-        colors: [Color(0xFF5ED7FF), Color(0xFF19F0C1), Color(0xFF5ED7FF)],
+        startAngle: startAngle,
+        endAngle: startAngle + sweepAngle,
+        colors: [Color(0xFF73E3FF), Color(0xFF19F0C1), Color(0xFF73E3FF)],
       ).createShader(Rect.fromCircle(center: center, radius: trackRadius))
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 22
+      ..strokeWidth = 16
       ..strokeCap = StrokeCap.round;
     canvas.drawArc(
       Rect.fromCircle(center: center, radius: trackRadius),
@@ -1319,14 +1311,14 @@ class BpmDialPainter extends CustomPainter {
     );
 
     final tickPaint = Paint()
-      ..color = Colors.white.withValues(alpha: 0.11 + (0.05 * interactionAlpha))
-      ..strokeWidth = 2.2
+      ..color = Colors.white.withValues(alpha: 0.14 + (0.06 * interactionAlpha))
+      ..strokeWidth = 2.0
       ..strokeCap = StrokeCap.round;
-    for (var i = 0; i <= 60; i++) {
-      final angle = startAngle + (sweepAngle * (i / 60));
-      final isMajor = i % 5 == 0;
-      final inner = trackRadius + (isMajor ? 7 : 10);
-      final outer = trackRadius + (isMajor ? 22 : 17);
+    for (var i = 0; i < 72; i++) {
+      final angle = startAngle + (sweepAngle * (i / 72));
+      final isMajor = i % 6 == 0;
+      final inner = trackRadius + (isMajor ? 8 : 10);
+      final outer = trackRadius + (isMajor ? 23 : 17);
       final start = Offset(
         center.dx + math.cos(angle) * inner,
         center.dy + math.sin(angle) * inner,
@@ -1340,11 +1332,11 @@ class BpmDialPainter extends CustomPainter {
 
     final innerRingPaint = Paint()
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.3
+      ..strokeWidth = 1.4
       ..color = Colors.white.withValues(
-        alpha: 0.08 + (0.03 * interactionAlpha),
+        alpha: 0.10 + (0.04 * interactionAlpha),
       );
-    canvas.drawCircle(center, trackRadius - 24, innerRingPaint);
+    canvas.drawCircle(center, trackRadius - 20, innerRingPaint);
 
     final handleAngle = startAngle + (sweepAngle * progress);
     final handleCenter = Offset(
@@ -1354,20 +1346,20 @@ class BpmDialPainter extends CustomPainter {
 
     final glowPaint = Paint()
       ..color = const Color(0xFF19F0C1).withValues(
-        alpha: 0.26 + (pulseAmount * 0.20) + (0.10 * interactionAlpha),
+        alpha: 0.30 + (pulseAmount * 0.18) + (0.12 * interactionAlpha),
       )
       ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 18);
     canvas.drawCircle(
       handleCenter,
-      21 + (pulseAmount * 4) + (interactionAlpha * 2),
+      20 + (pulseAmount * 4) + (interactionAlpha * 2),
       glowPaint,
     );
 
     final handlePaint = Paint()
       ..shader = const LinearGradient(
-        colors: [Color(0xFFDBFFFB), Color(0xFF19F0C1)],
-      ).createShader(Rect.fromCircle(center: handleCenter, radius: 14));
-    canvas.drawCircle(handleCenter, 13, handlePaint);
+        colors: [Color(0xFFF3FFFE), Color(0xFF19F0C1)],
+      ).createShader(Rect.fromCircle(center: handleCenter, radius: 13));
+    canvas.drawCircle(handleCenter, 12.5, handlePaint);
   }
 
   @override
@@ -1391,7 +1383,7 @@ class TimeSignatureSelector extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      height: 56,
+      height: 58,
       child: Row(
         children: [
           for (var index = 0; index < kTimeSignatures.length; index++) ...[
@@ -1430,12 +1422,12 @@ class _SignatureButton extends StatelessWidget {
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(18),
           color: selected
-              ? const Color(0xFF173946).withValues(alpha: 0.94)
-              : Colors.white.withValues(alpha: 0.04),
+              ? const Color(0xFF1C404D).withValues(alpha: 0.98)
+              : const Color(0xFF0A121C).withValues(alpha: 0.42),
           border: Border.all(
             color: selected
-                ? const Color(0xFF35E2BD).withValues(alpha: 0.75)
-                : Colors.white.withValues(alpha: 0.08),
+                ? const Color(0xFF89FFF1).withValues(alpha: 0.72)
+                : Colors.white.withValues(alpha: 0.04),
           ),
           boxShadow: selected
               ? [
@@ -1451,10 +1443,10 @@ class _SignatureButton extends StatelessWidget {
           child: Text(
             signature.label,
             style: Theme.of(context).textTheme.titleSmall?.copyWith(
-              fontWeight: FontWeight.w800,
+              fontWeight: FontWeight.w900,
               color: selected
                   ? Colors.white
-                  : Colors.white.withValues(alpha: 0.84),
+                  : Colors.white.withValues(alpha: 0.48),
             ),
           ),
         ),

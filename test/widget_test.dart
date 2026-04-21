@@ -1,4 +1,5 @@
-import 'package:flutter/widgets.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:metronome_app/main.dart';
@@ -15,6 +16,42 @@ void main() {
     expect(find.text('TAP TEMPO'), findsOneWidget);
     expect(find.byType(SingleChildScrollView), findsNothing);
     expect(find.text('Session Settings'), findsNothing);
+  });
+
+  testWidgets('Bpm dial outer ring responds to drag', (
+    WidgetTester tester,
+  ) async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(SystemChannels.platform, (_) async => null);
+
+    var changedBpm = 120;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: BpmDial(
+              bpm: 120,
+              min: kMinBpm,
+              max: kMaxBpm,
+              pulseAmount: 0,
+              size: 300,
+              onChanged: (value) => changedBpm = value,
+              onTapTempo: () {},
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final dial = find.byType(BpmDial);
+    final center = tester.getCenter(dial);
+    final gesture = await tester.startGesture(center + const Offset(120, 0));
+    await gesture.moveTo(center + const Offset(0, -120));
+    await tester.pump();
+    await gesture.up();
+
+    expect(changedBpm, isNot(120));
   });
 
   test('Tap tempo uses moving average and ignores outliers', () {
