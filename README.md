@@ -10,7 +10,7 @@
 
 ### 拉取代码 (Clone)
 ```bash
-git clone <your-github-repo-url>
+git clone https://github.com/MrJoeYW/metronome_app.git
 cd metronome_app
 ```
 
