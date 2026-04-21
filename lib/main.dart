@@ -91,7 +91,6 @@ class _MetronomeHomePageState extends State<MetronomeHomePage>
   int _activeBeat = 0;
   int _cycleCount = 0;
   String _statusCopy = 'Native SoundPool engine ready';
-  String _tapTempoHint = 'Tap tempo';
   Duration _storedPracticeDuration = Duration.zero;
   DateTime? _practiceSessionStart;
 
@@ -373,10 +372,7 @@ class _MetronomeHomePageState extends State<MetronomeHomePage>
     final next = value.clamp(kMinBpm, kMaxBpm);
     if (next == _bpm) {
       if (resetTapTempoBuffer && _tapTempoTracker.sampleCount > 0) {
-        setState(() {
-          _tapTempoTracker.reset();
-          _tapTempoHint = 'Tap tempo';
-        });
+        _tapTempoTracker.reset();
       }
       return;
     }
@@ -384,7 +380,6 @@ class _MetronomeHomePageState extends State<MetronomeHomePage>
       _bpm = next;
       if (resetTapTempoBuffer) {
         _tapTempoTracker.reset();
-        _tapTempoHint = 'Tap tempo';
       }
     });
     await _syncConfiguration();
@@ -392,16 +387,6 @@ class _MetronomeHomePageState extends State<MetronomeHomePage>
 
   Future<void> _handleTapTempo() async {
     final update = _tapTempoTracker.registerTap(DateTime.now());
-
-    setState(() {
-      _tapTempoHint = switch (update.state) {
-        TapTempoState.primed => 'Tap again',
-        TapTempoState.collecting => 'Averaging',
-        TapTempoState.locked => 'Tracking live',
-        TapTempoState.outlier => 'Ignored stray tap',
-      };
-    });
-
     final bpm = update.bpm;
     if (bpm == null) {
       return;
@@ -576,9 +561,6 @@ class _MetronomeHomePageState extends State<MetronomeHomePage>
                                 min: kMinBpm,
                                 max: kMaxBpm,
                                 pulseAmount: pulse,
-                                tapTempoHint: _tapTempoHint,
-                                tapTempoSampleCount:
-                                    _tapTempoTracker.sampleCount,
                                 size: math.min(
                                   constraints.maxWidth -
                                       (horizontalPadding * 2),
@@ -826,8 +808,6 @@ class BpmDial extends StatefulWidget {
     required this.min,
     required this.max,
     required this.pulseAmount,
-    required this.tapTempoHint,
-    required this.tapTempoSampleCount,
     required this.size,
     required this.onChanged,
     required this.onTapTempo,
@@ -837,8 +817,6 @@ class BpmDial extends StatefulWidget {
   final int min;
   final int max;
   final double pulseAmount;
-  final String tapTempoHint;
-  final int tapTempoSampleCount;
   final double size;
   final ValueChanged<int> onChanged;
   final VoidCallback onTapTempo;
@@ -847,7 +825,7 @@ class BpmDial extends StatefulWidget {
   State<BpmDial> createState() => _BpmDialState();
 }
 
-class _BpmDialState extends State<BpmDial> with SingleTickerProviderStateMixin {
+class _BpmDialState extends State<BpmDial> with TickerProviderStateMixin {
   static const double _dragSensitivity = 0.82;
 
   late final AnimationController _inertiaController;
@@ -1290,13 +1268,15 @@ class BpmDialPainter extends CustomPainter {
     final rimPaint = Paint()
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.4
-      ..color = Colors.white.withValues(alpha: 0.08 + (0.03 * interactionAlpha));
+      ..color = Colors.white.withValues(
+        alpha: 0.08 + (0.03 * interactionAlpha),
+      );
     canvas.drawCircle(center, outerRadius - 1.4, rimPaint);
 
     final trackPaint = Paint()
-      ..color = const Color(0xFF16324A).withValues(
-        alpha: 0.86 + (0.08 * interactionAlpha),
-      )
+      ..color = const Color(
+        0xFF16324A,
+      ).withValues(alpha: 0.86 + (0.08 * interactionAlpha))
       ..style = PaintingStyle.stroke
       ..strokeWidth = 24
       ..strokeCap = StrokeCap.round;
@@ -1309,9 +1289,9 @@ class BpmDialPainter extends CustomPainter {
     );
 
     final trackHighlightPaint = Paint()
-      ..color = const Color(0xFF5ED7FF).withValues(
-        alpha: 0.10 + (0.06 * interactionAlpha),
-      )
+      ..color = const Color(
+        0xFF5ED7FF,
+      ).withValues(alpha: 0.10 + (0.06 * interactionAlpha))
       ..style = PaintingStyle.stroke
       ..strokeWidth = 26
       ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 12);
@@ -1361,7 +1341,9 @@ class BpmDialPainter extends CustomPainter {
     final innerRingPaint = Paint()
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.3
-      ..color = Colors.white.withValues(alpha: 0.08 + (0.03 * interactionAlpha));
+      ..color = Colors.white.withValues(
+        alpha: 0.08 + (0.03 * interactionAlpha),
+      );
     canvas.drawCircle(center, trackRadius - 24, innerRingPaint);
 
     final handleAngle = startAngle + (sweepAngle * progress);
@@ -1371,9 +1353,9 @@ class BpmDialPainter extends CustomPainter {
     );
 
     final glowPaint = Paint()
-      ..color = const Color(
-        0xFF19F0C1,
-      ).withValues(alpha: 0.26 + (pulseAmount * 0.20) + (0.10 * interactionAlpha))
+      ..color = const Color(0xFF19F0C1).withValues(
+        alpha: 0.26 + (pulseAmount * 0.20) + (0.10 * interactionAlpha),
+      )
       ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 18);
     canvas.drawCircle(
       handleCenter,
@@ -1532,9 +1514,7 @@ class _TransportPanel extends StatelessWidget {
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(24),
               color: const Color(0xFF183247).withValues(alpha: 0.92),
-              border: Border.all(
-                color: Colors.white.withValues(alpha: 0.09),
-              ),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.09)),
               boxShadow: [
                 BoxShadow(
                   blurRadius: 18,
@@ -2028,7 +2008,11 @@ class TapTempoTracker {
       final state = _intervalsMs.length >= 2
           ? TapTempoState.locked
           : TapTempoState.collecting;
-      return TapTempoUpdate(state: state, bpm: nextBpm, sampleCount: sampleCount);
+      return TapTempoUpdate(
+        state: state,
+        bpm: nextBpm,
+        sampleCount: sampleCount,
+      );
     }
 
     final pendingIntervalMs = _pendingIntervalMs;
@@ -2048,7 +2032,10 @@ class TapTempoTracker {
     }
 
     _pendingIntervalMs = intervalMs;
-    return TapTempoUpdate(state: TapTempoState.outlier, sampleCount: sampleCount);
+    return TapTempoUpdate(
+      state: TapTempoState.outlier,
+      sampleCount: sampleCount,
+    );
   }
 
   void _acceptInterval(int intervalMs) {

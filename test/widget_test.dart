@@ -66,4 +66,29 @@ void main() {
     expect(resetTap.sampleCount, 1);
     expect(resetTap.bpm, isNull);
   });
+
+  test('Tap tempo adapts after two consistent faster taps', () {
+    final tracker = TapTempoTracker(
+      windowSize: 6,
+      timeout: const Duration(seconds: 2),
+      outlierTolerance: 0.30,
+    );
+    var now = DateTime(2026, 1, 1, 12);
+
+    tracker.registerTap(now);
+    now = now.add(const Duration(milliseconds: 500));
+    tracker.registerTap(now);
+    now = now.add(const Duration(milliseconds: 500));
+    tracker.registerTap(now);
+
+    now = now.add(const Duration(milliseconds: 320));
+    final firstShiftTap = tracker.registerTap(now);
+    expect(firstShiftTap.state, TapTempoState.outlier);
+    expect(firstShiftTap.bpm, isNull);
+
+    now = now.add(const Duration(milliseconds: 320));
+    final secondShiftTap = tracker.registerTap(now);
+    expect(secondShiftTap.state, TapTempoState.collecting);
+    expect(secondShiftTap.bpm, closeTo(188, 1));
+  });
 }
