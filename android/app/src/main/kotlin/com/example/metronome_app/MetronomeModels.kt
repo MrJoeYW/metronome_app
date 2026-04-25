@@ -14,12 +14,14 @@ const val EXTRA_VOCAL_MODE = "extra_vocal_mode"
 const val EXTRA_ACCENT_HAPTICS = "extra_accent_haptics"
 const val EXTRA_SUBDIVISION_TYPE = "extra_subdivision_type"
 const val EXTRA_BEAT_TYPES = "extra_beat_types"
+const val EXTRA_BEAT_RHYTHM_TYPES = "extra_beat_rhythm_types"
 
 /**
  * Flutter 与 Android 服务共享的节拍配置模型。
  *
  * beatTypes 使用字符串 token 传递：accent / secondary / light / rest。
  * 原生引擎只关心 rest 是否静音，以及 accent 是否触发强拍音色/振动。
+ * beatRhythmTypes 描述每拍内部节奏型，Android 调度线程会按该列表拆分单拍。
  */
 data class MetronomeConfig(
     val bpm: Int = 120,
@@ -31,6 +33,7 @@ data class MetronomeConfig(
     val accentHaptics: Boolean = true,
     val subdivisionType: Int = 0,
     val beatTypes: List<String> = listOf("accent", "light", "light", "light"),
+    val beatRhythmTypes: List<String> = listOf("quarter", "quarter", "quarter", "quarter"),
 ) {
     /** 转成 MethodChannel 可返回给 Flutter 的 Map。 */
     fun toMap(): Map<String, Any> {
@@ -44,6 +47,7 @@ data class MetronomeConfig(
             "accentHaptics" to accentHaptics,
             "subdivisionType" to subdivisionType,
             "beatTypes" to beatTypes,
+            "beatRhythmTypes" to beatRhythmTypes,
         )
     }
 
@@ -59,6 +63,7 @@ data class MetronomeConfig(
             putExtra(EXTRA_ACCENT_HAPTICS, accentHaptics)
             putExtra(EXTRA_SUBDIVISION_TYPE, subdivisionType)
             putStringArrayListExtra(EXTRA_BEAT_TYPES, ArrayList(beatTypes))
+            putStringArrayListExtra(EXTRA_BEAT_RHYTHM_TYPES, ArrayList(beatRhythmTypes))
         }
     }
 
@@ -77,6 +82,9 @@ data class MetronomeConfig(
                 beatTypes = (raw?.get("beatTypes") as? List<*>)
                     ?.mapNotNull { it as? String }
                     ?: defaultBeatTypes((raw?.get("beatsPerBar") as? Number)?.toInt() ?: 4),
+                beatRhythmTypes = (raw?.get("beatRhythmTypes") as? List<*>)
+                    ?.mapNotNull { it as? String }
+                    ?: defaultBeatRhythmTypes((raw?.get("beatsPerBar") as? Number)?.toInt() ?: 4),
             )
         }
 
@@ -97,6 +105,8 @@ data class MetronomeConfig(
                 subdivisionType = intent.getIntExtra(EXTRA_SUBDIVISION_TYPE, 0),
                 beatTypes = intent.getStringArrayListExtra(EXTRA_BEAT_TYPES)
                     ?: defaultBeatTypes(intent.getIntExtra(EXTRA_BEATS_PER_BAR, 4)),
+                beatRhythmTypes = intent.getStringArrayListExtra(EXTRA_BEAT_RHYTHM_TYPES)
+                    ?: defaultBeatRhythmTypes(intent.getIntExtra(EXTRA_BEATS_PER_BAR, 4)),
             )
         }
 
@@ -105,6 +115,10 @@ data class MetronomeConfig(
             return List(beatsPerBar.coerceIn(1, 16)) { index ->
                 if (index == 0) "accent" else "light"
             }
+        }
+
+        private fun defaultBeatRhythmTypes(beatsPerBar: Int): List<String> {
+            return List(beatsPerBar.coerceIn(1, 16)) { "quarter" }
         }
     }
 }

@@ -11,6 +11,7 @@ class PersistedSettings {
     required this.normalSoundId,
     required this.vocalMode,
     required this.subdivisionType,
+    required this.beatRhythmTypes,
     required this.webPageUrl,
   });
 
@@ -20,6 +21,7 @@ class PersistedSettings {
   final String normalSoundId;
   final String vocalMode;
   final int subdivisionType;
+  final List<String> beatRhythmTypes;
   final String webPageUrl;
 
   bool get vocalModeEnabled => vocalMode != 'off';
@@ -34,6 +36,7 @@ class PersistedSettings {
       'vocal_mode_enabled': vocalModeEnabled ? 1 : 0,
       'voice_mode': vocalMode,
       'subdivision_type': subdivisionType,
+      'beat_rhythm_types': beatRhythmTypes.join(','),
       'web_page_url': webPageUrl,
     };
   }
@@ -49,6 +52,7 @@ class PersistedSettings {
       normalSoundId: (map['normal_sound_id'] as String?) ?? 'wood',
       vocalMode: voiceMode ?? (vocalEnabled ? 'english' : 'off'),
       subdivisionType: (map['subdivision_type'] as int?) ?? 0,
+      beatRhythmTypes: _splitTokens(map['beat_rhythm_types'] as String?),
       webPageUrl: (map['web_page_url'] as String?) ?? kDefaultWebPageUrl,
     );
   }
@@ -79,6 +83,36 @@ class PracticeLog {
   }
 }
 
+class PracticeDaySummary {
+  const PracticeDaySummary({
+    required this.date,
+    required this.totalSeconds,
+    required this.sessionCount,
+  });
+
+  final DateTime date;
+  final int totalSeconds;
+  final int sessionCount;
+
+  factory PracticeDaySummary.fromMap(Map<String, Object?> map) {
+    final rawDate = (map['day'] as String?) ?? DateTime.now().toIso8601String();
+    final parts = rawDate.split('-');
+    final year = parts.isNotEmpty ? int.tryParse(parts[0]) : null;
+    final month = parts.length > 1 ? int.tryParse(parts[1]) : null;
+    final day = parts.length > 2 ? int.tryParse(parts[2]) : null;
+
+    return PracticeDaySummary(
+      date: DateTime(
+        year ?? DateTime.now().year,
+        month ?? DateTime.now().month,
+        day ?? DateTime.now().day,
+      ),
+      totalSeconds: (map['total_seconds'] as int?) ?? 0,
+      sessionCount: (map['session_count'] as int?) ?? 0,
+    );
+  }
+}
+
 class SavedMetronomePreset {
   const SavedMetronomePreset({
     required this.id,
@@ -88,6 +122,7 @@ class SavedMetronomePreset {
     required this.beatsPerBar,
     required this.noteValue,
     required this.beatPattern,
+    required this.beatRhythmTypes,
     required this.subdivisionType,
     required this.timerEnabled,
     required this.timerSeconds,
@@ -103,6 +138,7 @@ class SavedMetronomePreset {
   final int beatsPerBar;
   final int noteValue;
   final List<String> beatPattern;
+  final List<String> beatRhythmTypes;
   final int subdivisionType;
   final bool timerEnabled;
   final int timerSeconds;
@@ -119,6 +155,7 @@ class SavedMetronomePreset {
       'beats_per_bar': beatsPerBar,
       'note_value': noteValue,
       'beat_pattern': beatPattern.join(','),
+      'beat_rhythm_types': beatRhythmTypes.join(','),
       'subdivision_type': subdivisionType,
       'timer_enabled': timerEnabled ? 1 : 0,
       'timer_seconds': timerSeconds,
@@ -130,7 +167,6 @@ class SavedMetronomePreset {
   }
 
   factory SavedMetronomePreset.fromMap(Map<String, Object?> map) {
-    final rawPattern = (map['beat_pattern'] as String?) ?? '';
     return SavedMetronomePreset(
       id: map['id'] as int?,
       name: (map['name'] as String?) ?? 'Untitled',
@@ -138,11 +174,8 @@ class SavedMetronomePreset {
       timeSignature: (map['time_signature'] as String?) ?? '4/4',
       beatsPerBar: (map['beats_per_bar'] as int?) ?? 4,
       noteValue: (map['note_value'] as int?) ?? 4,
-      beatPattern: rawPattern
-          .split(',')
-          .map((value) => value.trim())
-          .where((value) => value.isNotEmpty)
-          .toList(),
+      beatPattern: _splitTokens(map['beat_pattern'] as String?),
+      beatRhythmTypes: _splitTokens(map['beat_rhythm_types'] as String?),
       subdivisionType: (map['subdivision_type'] as int?) ?? 0,
       timerEnabled: ((map['timer_enabled'] as int?) ?? 0) == 1,
       timerSeconds: (map['timer_seconds'] as int?) ?? 0,
@@ -169,7 +202,7 @@ class MetronomeDatabase {
     final dbPath = await getDatabasesPath();
     final database = await openDatabase(
       p.join(dbPath, 'pulse_grid.db'),
-      version: 3,
+      version: 4,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE Settings (
@@ -181,6 +214,7 @@ class MetronomeDatabase {
             vocal_mode_enabled INTEGER NOT NULL DEFAULT 0,
             voice_mode TEXT NOT NULL DEFAULT 'off',
             subdivision_type INTEGER NOT NULL DEFAULT 0,
+            beat_rhythm_types TEXT NOT NULL DEFAULT '',
             web_page_url TEXT NOT NULL DEFAULT '$kDefaultWebPageUrl'
           )
         ''');
@@ -207,6 +241,20 @@ class MetronomeDatabase {
             tableName: 'Settings',
             columnName: 'web_page_url',
             definition: "TEXT NOT NULL DEFAULT '$kDefaultWebPageUrl'",
+          );
+        }
+        if (oldVersion < 4) {
+          await _addColumnIfMissing(
+            db,
+            tableName: 'Settings',
+            columnName: 'beat_rhythm_types',
+            definition: "TEXT NOT NULL DEFAULT ''",
+          );
+          await _addColumnIfMissing(
+            db,
+            tableName: 'SavedConfigs',
+            columnName: 'beat_rhythm_types',
+            definition: "TEXT NOT NULL DEFAULT ''",
           );
         }
       },
@@ -308,6 +356,54 @@ class MetronomeDatabase {
     return rows.map(PracticeLog.fromMap).toList();
   }
 
+  Future<List<PracticeDaySummary>> dailyPracticeSummaries({
+    required DateTime start,
+    required DateTime end,
+  }) async {
+    final db = await _tryDatabase();
+    if (db == null) {
+      return const [];
+    }
+
+    final startOfDay = DateTime(start.year, start.month, start.day);
+    final endExclusive = DateTime(
+      end.year,
+      end.month,
+      end.day,
+    ).add(const Duration(days: 1));
+    final rows = await db.rawQuery(
+      '''
+      SELECT
+        substr(date, 1, 10) AS day,
+        COALESCE(SUM(duration_seconds), 0) AS total_seconds,
+        COUNT(*) AS session_count
+      FROM PracticeLogs
+      WHERE date >= ? AND date < ?
+      GROUP BY day
+      ORDER BY day ASC
+      ''',
+      [startOfDay.toIso8601String(), endExclusive.toIso8601String()],
+    );
+    return rows.map(PracticeDaySummary.fromMap).toList();
+  }
+
+  Future<List<PracticeLog>> practiceLogsForDay(DateTime day) async {
+    final db = await _tryDatabase();
+    if (db == null) {
+      return const [];
+    }
+
+    final start = DateTime(day.year, day.month, day.day);
+    final end = start.add(const Duration(days: 1));
+    final rows = await db.query(
+      'PracticeLogs',
+      where: 'date >= ? AND date < ?',
+      whereArgs: [start.toIso8601String(), end.toIso8601String()],
+      orderBy: 'date DESC',
+    );
+    return rows.map(PracticeLog.fromMap).toList();
+  }
+
   Future<List<SavedMetronomePreset>> loadSavedPresets() async {
     final db = await _tryDatabase();
     if (db == null) {
@@ -350,6 +446,7 @@ class MetronomeDatabase {
         beats_per_bar INTEGER NOT NULL,
         note_value INTEGER NOT NULL,
         beat_pattern TEXT NOT NULL,
+        beat_rhythm_types TEXT NOT NULL DEFAULT '',
         subdivision_type INTEGER NOT NULL DEFAULT 0,
         timer_enabled INTEGER NOT NULL DEFAULT 0,
         timer_seconds INTEGER NOT NULL DEFAULT 0,
@@ -378,4 +475,12 @@ class MetronomeDatabase {
       );
     }
   }
+}
+
+List<String> _splitTokens(String? raw) {
+  return (raw ?? '')
+      .split(',')
+      .map((value) => value.trim())
+      .where((value) => value.isNotEmpty)
+      .toList();
 }

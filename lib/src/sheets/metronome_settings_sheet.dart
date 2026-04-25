@@ -107,12 +107,6 @@ class _MetronomeSettingsSheetState extends State<MetronomeSettingsSheet> {
                       color: AppPalette.textSecondary,
                     ),
                   ),
-                  const SizedBox(height: 18),
-                  _PracticeHistoryPanel(
-                    todayDuration: widget.todayPracticeDuration,
-                    logs: widget.practiceLogs,
-                  ),
-                  const SizedBox(height: 18),
                   _SettingsSectionTitle(title: 'Accent Sound'),
                   const SizedBox(height: 10),
                   Wrap(
@@ -231,96 +225,6 @@ class _SettingsSectionTitle extends StatelessWidget {
   }
 }
 
-class _PracticeHistoryPanel extends StatelessWidget {
-  const _PracticeHistoryPanel({
-    required this.todayDuration,
-    required this.logs,
-  });
-
-  final Duration todayDuration;
-  final List<PracticeLog> logs;
-
-  @override
-  Widget build(BuildContext context) {
-    final visibleLogs = logs.take(4).toList();
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: AppPalette.surfaceVariant,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: AppPalette.border),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Icon(
-                Icons.history_rounded,
-                size: 18,
-                color: AppPalette.primary,
-              ),
-              const SizedBox(width: 8),
-              Text(
-                'Practice History',
-                style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                  color: AppPalette.textPrimary,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-              const Spacer(),
-              Text(
-                _formatCompactDuration(todayDuration),
-                style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                  color: AppPalette.primary,
-                  fontFeatures: const [ui.FontFeature.tabularFigures()],
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          if (visibleLogs.isEmpty)
-            Text(
-              'No sessions logged yet.',
-              style: Theme.of(
-                context,
-              ).textTheme.bodySmall?.copyWith(color: AppPalette.textSecondary),
-            )
-          else
-            for (final log in visibleLogs) ...[
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 5),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        _formatHistoryDate(log.date),
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: AppPalette.textSecondary,
-                        ),
-                      ),
-                    ),
-                    Text(
-                      '${_formatCompactDuration(Duration(seconds: log.durationSeconds))} | ${log.averageBpm} BPM',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: AppPalette.textPrimary,
-                        fontFeatures: const [ui.FontFeature.tabularFigures()],
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-        ],
-      ),
-    );
-  }
-}
-
 String _formatCompactDuration(Duration duration) {
   final totalSeconds = duration.inSeconds;
   final hours = totalSeconds ~/ 3600;
@@ -341,6 +245,61 @@ String _formatHistoryDate(DateTime date) {
   final hour = date.hour.toString().padLeft(2, '0');
   final minute = date.minute.toString().padLeft(2, '0');
   return '$month/$day $hour:$minute';
+}
+
+String _formatCalendarDate(DateTime date) {
+  final year = date.year.toString().padLeft(4, '0');
+  final month = date.month.toString().padLeft(2, '0');
+  final day = date.day.toString().padLeft(2, '0');
+  return '$year-$month-$day';
+}
+
+String _formatCalendarMonth(DateTime date) {
+  final month = date.month.toString().padLeft(2, '0');
+  return '${date.year}.$month';
+}
+
+String _dayKey(DateTime date) {
+  final normalized = DateTime(date.year, date.month, date.day);
+  return _formatCalendarDate(normalized);
+}
+
+bool _isSameDay(DateTime left, DateTime right) {
+  return left.year == right.year &&
+      left.month == right.month &&
+      left.day == right.day;
+}
+
+DateTime _addMonths(DateTime date, int monthOffset) {
+  final zeroBasedMonth = date.month - 1 + monthOffset;
+  final year = date.year + (zeroBasedMonth ~/ 12);
+  final month = (zeroBasedMonth % 12) + 1;
+  return DateTime(year, month);
+}
+
+List<DateTime> _monthCalendarDays(DateTime month) {
+  final firstDay = DateTime(month.year, month.month);
+  final leadingDays = firstDay.weekday - DateTime.monday;
+  final start = firstDay.subtract(Duration(days: leadingDays));
+  return [
+    for (var index = 0; index < 42; index++) start.add(Duration(days: index)),
+  ];
+}
+
+Color _practiceIntensityColor(int seconds) {
+  if (seconds <= 0) {
+    return AppPalette.surfaceVariant.withValues(alpha: 0.62);
+  }
+  if (seconds < 10 * 60) {
+    return AppPalette.primary.withValues(alpha: 0.30);
+  }
+  if (seconds < 30 * 60) {
+    return AppPalette.primary.withValues(alpha: 0.55);
+  }
+  if (seconds < 60 * 60) {
+    return AppPalette.secondary.withValues(alpha: 0.72);
+  }
+  return AppPalette.secondary;
 }
 
 class _SettingsChoiceChip extends StatelessWidget {

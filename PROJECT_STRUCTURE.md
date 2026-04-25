@@ -41,7 +41,7 @@
 
 - `吉他社`：`GuitarSocietyPage`，加载 `https://www.jitashe.org/` 的 WebView，右下角有共享播放状态的 Start/Stop 悬浮按钮。页面首次访问后由 `IndexedStack` 保活，底部切换不会重新创建 WebView。
 - `节拍器`：默认首页，包含顶部功能按钮、轻重拍编辑条、BPM 圆盘、Start/Stop。第三轮已移除首页 Stats，练习统计后续迁移到独立页面。
-- `设置`：`SettingsPage`，支持输入名称保存当前配置、查看、恢复和删除已保存配置。
+- `我的`：`SettingsPage`，展示今日/当前会话/近期/累计/平均 BPM 等练习统计、可左右滑动切换月份的练琴日历、单日详情弹窗，以及社区页地址设置。
 
 播放状态集中在 `_MetronomeMainPageState`，首页 Start 按钮、WebView 悬浮按钮、倒计时自动停止都调用同一套 `_setPlayback` / `_togglePlayback` 逻辑。底部页面通过“访问后懒加载 + IndexedStack 保活”管理，避免 WebView 每次切换都重新加载。
 
@@ -53,7 +53,7 @@
 - `MyApp`：Material 主题与入口页面。
 - `MetronomeMainPage` / `_MetronomeMainPageState`：全局状态中心，维护 BPM、拍号、轻重拍配置、音色、定时器、播放状态、练习时长、保存配置和 Android 通道。
 - `TopFunctionBar` / `FunctionButton`：首页顶部四个功能入口：拍号、音色、调音器、定时。
-- `BeatPatternBar` / `BeatPatternCell`：轻重拍编辑条，点击循环 `Light -> Secondary -> Accent -> Rest -> Light`，长按打开单拍编辑预留面板。
+- `BeatPatternBar` / `BeatPatternCell`：轻重拍编辑条，点击循环 `Light -> Secondary -> Accent -> Rest -> Light`，长按打开每拍节奏型选择抽屉；Cell 同时显示拍号和当前 `BeatRhythmType` 记号。
 - `BpmDial` / `BpmDialPainter`：BPM 圆盘，外圈拖动调速，中心 Tap Tempo，`+/-` 支持微调和长按连调。
 - `TransportPanel`：Start/Stop 控制区。第二轮已删除底部 `BEAT` 计数卡片，第三轮已移除首页 Stats 区域。
 - `TimeSignatureSheet`：拍号抽屉，双滚轮选择拍数 `1~16` 和时值 `1/2/4/8/16/32`，右上角 Apply，快捷拍型优先一行五个。抽屉不再显示显式关闭按钮，可点击遮罩或下拉关闭。
@@ -61,19 +61,25 @@
 - `TunerSheet` / `_TunerDisplay`：真实调音器 UI，通过 Android `tuner/pitch_events` 读取麦克风基频，显示音名、频率、cents 偏差和指针。
 - `TimerSheet`：定时抽屉，右上角 Apply，固定尺寸 Off/Countdown，分钟滚轮支持 `1~999`，首页定时按钮显示剩余时间，归零后停止节拍器。滚轮选中框使用 picker 自身 selection overlay，确保数字与选中框居中对齐。
 - `GuitarSocietyPage`：WebView 页面和悬浮节拍器按钮。
-- `SettingsPage` / `_SavedPresetTile`：保存、恢复、删除本地命名配置。
+- `SettingsPage` / `_PracticeCalendarPanel` / `_PracticeDayDialog`：底部“我的”页，展示练习统计、带星期栏的普通月历和单日练习记录详情；社区 WebView 地址设置仍保留在此页。可见的 `Practice History` 列表已移除。
 - `TapTempoTracker`：纯 Dart Tap Tempo 算法，覆盖超时重置、异常值过滤、滑动平均和快速变速适配。
-- `MetronomeConfig` / `BeatEvent` / `MetronomeBridge`：Flutter 与 Android 原生层的配置、事件和通道封装。
+- `MetronomeConfig` / `BeatRhythmType` / `BeatEvent` / `MetronomeBridge`：Flutter 与 Android 原生层的配置、每拍节奏型、事件和通道封装。
 
 ## 本地数据
 
-[lib/metronome_database.dart](lib/metronome_database.dart) 使用 `sqflite`，数据库文件名为 `pulse_grid.db`，当前版本为 `2`。
+[lib/metronome_database.dart](lib/metronome_database.dart) 使用 `sqflite`，数据库文件名为 `pulse_grid.db`，当前版本为 `4`。
 
 数据表：
 
-- `Settings`：最近一次基础设置，用于 App 启动恢复。
-- `PracticeLogs`：练习记录，用于今日累计和历史展示。
-- `SavedConfigs`：用户命名保存的完整配置，包含 BPM、拍号、轻重拍配置、细分、定时、音色和语言数拍。
+- `Settings`：最近一次基础设置，用于 App 启动恢复；当前也保存 `beat_rhythm_types`，用于恢复每拍节奏型。
+- `PracticeLogs`：练习记录，用于今日累计、近期历史、按日汇总和单日明细展示。
+- `SavedConfigs`：用户命名保存的完整配置，包含 BPM、拍号、轻重拍配置、每拍节奏型、细分、定时、音色和语言数拍。
+
+新增查询/模型：
+
+- `PracticeDaySummary`：每日练琴汇总模型，包含日期、总秒数和练习次数。
+- `dailyPracticeSummaries(start, end)`：按日期范围汇总每日练习时长和次数，供练琴日历使用。
+- `practiceLogsForDay(day)`：查询某一天的练习明细，供单日详情弹窗使用。
 
 Widget test 环境下可能没有 sqflite 初始化，数据库封装会捕获该环境错误，避免 UI 测试被平台数据库阻断。
 
@@ -105,6 +111,7 @@ Flutter 下发的 `MetronomeConfig` 关键字段：
 - `accentHaptics`
 - `subdivisionType`
 - `beatTypes`：字符串列表，取值为 `accent / secondary / light / rest`。Android 原生层会将 `rest` 整拍静音。
+- `beatRhythmTypes`：字符串列表，取值来自 Flutter `BeatRhythmType`，例如 `quarter / eighth_pair / eighth_triplet / sixteenth_four`。Android 调度会按每拍节奏型拆分单拍：两个八分音符响两下，三连音均分响三下；`quarter` 继续沿用全局 `subdivisionType`，避免破坏旧细分控制。
 
 Android 回传事件：
 
@@ -140,7 +147,7 @@ android/app/src/main/kotlin/com/example/metronome_app/
 
 - `MainActivity.kt`：注册 MethodChannel / EventChannel，接收 Flutter 指令并转发给服务或状态缓存；同时处理麦克风权限和调音器事件通道。
 - `MetronomeService.kt`：前台服务，负责通知、音频焦点、WakeLock、振动、TextToSpeech 和引擎生命周期。
-- `MetronomeEngine.kt`：低延迟播放核心，使用 `SoundPool` 预加载 wav，后台线程按纳秒时间调度节拍。Rest 拍会完整跳过音频、细分、振动和 TTS。
+- `MetronomeEngine.kt`：低延迟播放核心，使用 `SoundPool` 预加载 wav，后台线程按纳秒时间调度节拍。Rest 拍会完整跳过音频、细分、振动和 TTS；非 quarter 的 `beatRhythmTypes` 会把单拍拆成对应的均分发声槽。
 - `MetronomeModels.kt`：原生配置模型、Intent 序列化、状态快照和 EventChannel 发射器。
 - `TunerAnalyzer.kt`：调音器音频分析器，使用 `AudioRecord` 读取 PCM，并用归一化自相关估算单音基频。
 
@@ -224,7 +231,7 @@ kotlin.caching.enabled=false
 - 播放状态必须继续集中在 `MetronomeMainPage`，避免首页、WebView 悬浮按钮和倒计时出现不同步。
 - Rest 静音必须同时覆盖主拍、细分、TTS 和振动。
 - 调音器当前是 Android 原生 `AudioRecord` + 自相关基础识别，后续如追求更高精度可替换为 YIN/MPM 算法。
-- 练习统计不再放首页，后续可在独立页面实现类似 GitHub contribution calendar 的练琴日历。
+- 练习统计不再放首页；底部“我的”页使用普通月历展示练琴记录，支持左右滑动切换月份，并在点击日期时弹出当天练习详情。
 - Tap Tempo 逻辑继续保持纯 Dart 可测试，不要和 UI 动画耦合。
 - WebView 只代表 Android/iOS 移动端真实体验，桌面或 Web 壳工程不代表最终低延迟播放表现。
 
@@ -253,3 +260,18 @@ kotlin.caching.enabled=false
 - `lib/src/pages/webview_page.dart`: the first tab remains kept alive by `IndexedStack`, loads the configured URL, reloads when that URL changes, adds a bottom WebView back button using `canGoBack/goBack`, and makes the floating Start/Stop control semi-transparent while sharing the same transport state as the main page.
 - `lib/src/pages/settings_page.dart`: bottom navigation first tab is now `Community`, and the settings page includes a `Community page` URL editor with save and reset-to-default actions.
 - `lib/src/sheets/function_sheets.dart`: tuner display now keeps one stable layout for ordinary listening/no-signal states. It caches the latest stable reading for about 800ms, then shows `--`, `-- Hz`, centered needle, and helper text instead of swapping to a separate Listening layout. Permission denied and hard tuner errors still show dedicated status panels.
+
+## 2026-04-25 My Page and Beat Rhythm Update
+
+- `lib/metronome_database.dart`: database version is now `4`. `Settings` and `SavedConfigs` add `beat_rhythm_types` with non-breaking migrations. The database also exposes `PracticeDaySummary`, `dailyPracticeSummaries(start, end)`, and `practiceLogsForDay(day)` for the practice calendar and day detail dialog.
+- `lib/src/pages/settings_page.dart`: bottom navigation third tab is now `我的` with `Icons.person_rounded`. The page title is `我的`, keeps the existing practice metrics, removes the visible `Practice History` list, adds a swipeable monthly `练琴日历` with weekday labels, and opens an `AlertDialog` with date, total time, session count, current in-progress session when applicable, and the day’s logged sessions.
+- `lib/src/widgets/beat_pattern.dart`: beat cells now show a custom-painted per-beat rhythm glyph. Long press opens a dark grid rhythm picker with note/rest/triplet-style glyphs for the selected beat; tap still only cycles `BeatType` and does not change rhythm.
+- `lib/src/models/metronome_models.dart`: adds functional `BeatRhythmType` patterns with slot counts and sounding slots. `MetronomeConfig` now serializes `beatRhythmTypes` alongside `beatTypes`.
+- `android/app/src/main/kotlin/com/example/metronome_app/MetronomeModels.kt` and `MetronomeEngine.kt`: MethodChannel config, status snapshots, and service intents preserve `beatRhythmTypes`; Android playback now consumes them so non-quarter beat rhythms split a beat into the expected evenly spaced clicks. Existing Rest silence, global subdivision for quarter beats, TTS, and haptics behavior remains intact.
+
+## 2026-04-26 Rhythm Assets and Overflow Fixes
+
+- `assets/images/subdivision-1.webp` through `subdivision-10.webp`: rhythm picker note/rest/triplet artwork supplied as local image assets and loaded through the existing `assets/images/` pubspec declaration.
+- `lib/src/models/metronome_models.dart`: each `BeatRhythmType` now carries an `assetPath` for its picker/beat-cell glyph while retaining the slot-count playback behavior.
+- `lib/src/widgets/beat_pattern.dart`: rhythm glyph rendering now prefers the local WebP assets with color filtering, falling back to the custom painter only if an asset fails to load. Rest beat cells are taller so empty beats no longer overflow.
+- `lib/src/widgets/transport_and_presets.dart`: the save-configuration dialog now accounts for keyboard `viewInsets` and is scrollable, preventing bottom overflow when the text field auto-focuses.

@@ -30,7 +30,7 @@ enum BeatType {
   accent('accent', 'Accent', 'A', AppPalette.secondary, 56),
   secondary('secondary', 'Secondary', 'S', AppPalette.primary, 42),
   light('light', 'Light', 'L', Color(0xFF1F7A7A), 28),
-  rest('rest', 'Rest', 'R', Color(0xFF2A2F35), 20);
+  rest('rest', 'Rest', 'R', Color(0xFF2A2F35), 28);
 
   const BeatType(
     this.token,
@@ -90,6 +90,115 @@ enum SubdivisionType {
   }
 }
 
+enum BeatRhythmType {
+  quarter('quarter', '四分音符', '♩', 1, [0], 'assets/images/subdivision-1.webp'),
+  eighthPair('eighth_pair', '两个八分音符', '♫', 2, [
+    0,
+    1,
+  ], 'assets/images/subdivision-2.webp'),
+  eighthRest('eighth_rest', '八分音符 + 休止', '♪ 休', 2, [
+    0,
+  ], 'assets/images/subdivision-3.webp'),
+  restEighth('rest_eighth', '休止 + 八分音符', '休 ♪', 2, [
+    1,
+  ], 'assets/images/subdivision-3.webp'),
+  triplet(
+    'eighth_triplet',
+    '三连音',
+    '3',
+    3,
+    [0, 1, 2],
+    'assets/images/subdivision-4.webp',
+    true,
+  ),
+  tripletRestFirst(
+    'triplet_rest_first',
+    '休止后三连音',
+    '休 3',
+    3,
+    [1, 2],
+    'assets/images/subdivision-5.webp',
+    true,
+  ),
+  tripletRestMiddle(
+    'triplet_rest_middle',
+    '中间休止三连音',
+    '3 休',
+    3,
+    [0, 2],
+    'assets/images/subdivision-6.webp',
+    true,
+  ),
+  tripletRestLast(
+    'triplet_rest_last',
+    '末尾休止三连音',
+    '3 休',
+    3,
+    [0, 1],
+    'assets/images/subdivision-7.webp',
+    true,
+  ),
+  sixteenthFour('sixteenth_four', '四个十六分音符', '♬', 4, [
+    0,
+    1,
+    2,
+    3,
+  ], 'assets/images/subdivision-8.webp'),
+  dottedEighthSixteenth(
+    'dotted_eighth_sixteenth',
+    '附点八分 + 十六分',
+    '♪.♬',
+    4,
+    [0, 3],
+    'assets/images/subdivision-9.webp',
+  ),
+  sixteenthDottedEighth(
+    'sixteenth_dotted_eighth',
+    '十六分 + 附点八分',
+    '♬♪.',
+    4,
+    [0, 1],
+    'assets/images/subdivision-10.webp',
+  );
+
+  const BeatRhythmType(
+    this.token,
+    this.label,
+    this.notation,
+    this.slotCount,
+    this.soundSlots,
+    this.assetPath, [
+    this.isTriplet = false,
+  ]);
+
+  final String token;
+  final String label;
+  final String notation;
+  final int slotCount;
+  final List<int> soundSlots;
+  final String assetPath;
+  final bool isTriplet;
+
+  static BeatRhythmType fromToken(String token) {
+    final alias = switch (token) {
+      'whole' || 'half' || 'dotted_half' || 'dotted_quarter' => 'quarter',
+      'eighth' => 'eighth_pair',
+      'sixteenth' || 'thirty_second' => 'sixteenth_four',
+      'dotted_eighth' || 'dotted' => 'dotted_eighth_sixteenth',
+      'sixteenth_triplet' => 'eighth_triplet',
+      'front_eight_back_sixteen' => 'dotted_eighth_sixteenth',
+      'front_sixteen_back_eight' => 'sixteenth_dotted_eighth',
+      _ => token,
+    };
+    for (final type in values) {
+      if (type.token == alias) {
+        return type;
+      }
+    }
+    return BeatRhythmType.quarter;
+  }
+}
+
 const int kMinBpm = 10;
 const int kMaxBpm = 400;
 const List<int> kNoteValues = [1, 2, 4, 8, 16, 32];
@@ -130,6 +239,43 @@ List<BeatType> _beatPatternFromTokens(List<String> tokens, int beatsPerBar) {
   }
   return _resizeBeatPattern(
     tokens.map(BeatType.fromToken).toList(),
+    beatsPerBar,
+  );
+}
+
+List<BeatRhythmType> _defaultBeatRhythms(int beatsPerBar) {
+  return [
+    for (var index = 0; index < beatsPerBar; index++) BeatRhythmType.quarter,
+  ];
+}
+
+List<BeatRhythmType> _resizeBeatRhythms(
+  List<BeatRhythmType> current,
+  int beatsPerBar,
+) {
+  final nextLength = beatsPerBar.clamp(1, 16).toInt();
+  if (current.length == nextLength) {
+    return current;
+  }
+  if (current.length > nextLength) {
+    return current.take(nextLength).toList();
+  }
+  return [
+    ...current,
+    for (var index = current.length; index < nextLength; index++)
+      BeatRhythmType.quarter,
+  ];
+}
+
+List<BeatRhythmType> _beatRhythmsFromTokens(
+  List<String> tokens,
+  int beatsPerBar,
+) {
+  if (tokens.isEmpty) {
+    return _defaultBeatRhythms(beatsPerBar);
+  }
+  return _resizeBeatRhythms(
+    tokens.map(BeatRhythmType.fromToken).toList(),
     beatsPerBar,
   );
 }
@@ -284,6 +430,7 @@ class MetronomeConfig {
     required this.accentHaptics,
     required this.subdivisionType,
     required this.beatTypes,
+    required this.beatRhythmTypes,
   });
 
   final int bpm;
@@ -296,6 +443,7 @@ class MetronomeConfig {
   final bool accentHaptics;
   final int subdivisionType;
   final List<String> beatTypes;
+  final List<String> beatRhythmTypes;
 
   Map<String, dynamic> toMap() {
     return {
@@ -309,6 +457,7 @@ class MetronomeConfig {
       'accentHaptics': accentHaptics,
       'subdivisionType': subdivisionType,
       'beatTypes': beatTypes,
+      'beatRhythmTypes': beatRhythmTypes,
     };
   }
 
@@ -325,6 +474,11 @@ class MetronomeConfig {
       subdivisionType: (map['subdivisionType'] as int?) ?? 0,
       beatTypes:
           (map['beatTypes'] as List<dynamic>?)
+              ?.map((value) => value.toString())
+              .toList() ??
+          const [],
+      beatRhythmTypes:
+          (map['beatRhythmTypes'] as List<dynamic>?)
               ?.map((value) => value.toString())
               .toList() ??
           const [],

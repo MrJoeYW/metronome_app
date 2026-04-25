@@ -16,7 +16,7 @@ void main() {
     expect(find.text('--'), findsOneWidget);
     expect(find.text('Community'), findsOneWidget);
     expect(find.text('\u8282\u62cd\u5668'), findsOneWidget);
-    expect(find.text('\u8bbe\u7f6e'), findsOneWidget);
+    expect(find.text('\u6211\u7684'), findsOneWidget);
     expect(find.byType(TopFunctionBar), findsOneWidget);
     expect(find.byType(BeatPatternBar), findsOneWidget);
     expect(find.byType(BottomNavigation), findsOneWidget);
@@ -61,7 +61,7 @@ void main() {
     expect(cell.type, BeatType.secondary);
   });
 
-  testWidgets('Beat pattern long press opens reserved editor', (
+  testWidgets('Beat pattern long press opens rhythm picker', (
     WidgetTester tester,
   ) async {
     await tester.pumpWidget(const MyApp());
@@ -70,9 +70,9 @@ void main() {
     await tester.longPress(find.byType(BeatPatternCell).first);
     await tester.pumpAndSettle();
 
-    expect(find.text('Beat 1'), findsOneWidget);
-    expect(find.text('Current type'), findsOneWidget);
-    expect(find.text('Subdivision'), findsOneWidget);
+    expect(find.text('Beat 1 rhythm'), findsOneWidget);
+    expect(find.text('四分音符'), findsWidgets);
+    expect(find.text('三连音'), findsOneWidget);
   });
 
   test('Metronome config serializes rest beat pattern', () {
@@ -87,9 +87,12 @@ void main() {
       accentHaptics: true,
       subdivisionType: 0,
       beatTypes: const ['accent', 'light', 'rest', 'light'],
+      beatRhythmTypes: const ['quarter', 'eighth_pair', 'quarter', 'quarter'],
     );
 
     expect(config.toMap()['beatTypes'], contains('rest'));
+    expect(config.toMap()['beatRhythmTypes'], contains('eighth_pair'));
+    expect(BeatRhythmType.fromToken('eighth'), BeatRhythmType.eighthPair);
   });
 
   testWidgets('Bpm dial outer ring responds to drag', (

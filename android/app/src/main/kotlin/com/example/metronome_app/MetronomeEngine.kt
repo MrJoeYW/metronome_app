@@ -18,6 +18,7 @@ import kotlin.math.roundToLong
  *
  * SoundPool 负责播放短促 wav，后台线程按 elapsedRealtimeNanos 调度节拍。
  * Flutter 传来的 beatTypes 会在这里参与播放判断，Rest 拍会完整跳过音频、振动和 TTS。
+ * beatRhythmTypes 会覆盖单拍内部发声密度，例如两个八分音符响两下，三连音均分响三下。
  */
 class MetronomeEngine(
     context: Context,
@@ -104,10 +105,10 @@ class MetronomeEngine(
 
         while (running.get()) {
             val config = configRef.get()
-            val pattern = subdivisionPattern(config.subdivisionType)
             if (beatIndex >= config.beatsPerBar) {
                 beatIndex = 0
             }
+            val pattern = activeSubdivisionPattern(config, beatIndex)
             if (subdivisionIndex >= pattern.mask.size) {
                 subdivisionIndex = 0
             }
@@ -206,6 +207,15 @@ class MetronomeEngine(
             ?: if (beatIndex == 0) "accent" else "light"
     }
 
+    private fun activeSubdivisionPattern(config: MetronomeConfig, beatIndex: Int): SubdivisionPattern {
+        val rhythmPattern = rhythmPattern(rhythmTypeFor(config, beatIndex))
+        return rhythmPattern ?: subdivisionPattern(config.subdivisionType)
+    }
+
+    private fun rhythmTypeFor(config: MetronomeConfig, beatIndex: Int): String {
+        return config.beatRhythmTypes.getOrNull(beatIndex) ?: "quarter"
+    }
+
     private fun playSubTick() {
         val soundId = soundIds["electronic"] ?: soundIds["mechanical"] ?: return
         soundPool.play(soundId, 0.56f, 0.56f, 0, 0, 1.35f)
@@ -233,6 +243,26 @@ class MetronomeEngine(
                 5 -> SubdivisionPattern(booleanArrayOf(true, true, true, false))
                 6 -> SubdivisionPattern(booleanArrayOf(true, false, false, true))
                 else -> SubdivisionPattern(booleanArrayOf(true))
+            }
+        }
+
+        private fun rhythmPattern(type: String): SubdivisionPattern? {
+            // quarter 继续使用全局 subdivisionType，避免破坏旧的细分控制。
+            return when (type) {
+                "eighth", "eighth_pair" -> SubdivisionPattern(booleanArrayOf(true, true))
+                "eighth_rest" -> SubdivisionPattern(booleanArrayOf(true, false))
+                "rest_eighth" -> SubdivisionPattern(booleanArrayOf(false, true))
+                "eighth_triplet", "sixteenth_triplet" -> SubdivisionPattern(booleanArrayOf(true, true, true))
+                "triplet_rest_first" -> SubdivisionPattern(booleanArrayOf(false, true, true))
+                "triplet_rest_middle" -> SubdivisionPattern(booleanArrayOf(true, false, true))
+                "triplet_rest_last" -> SubdivisionPattern(booleanArrayOf(true, true, false))
+                "sixteenth", "thirty_second", "sixteenth_four" ->
+                    SubdivisionPattern(booleanArrayOf(true, true, true, true))
+                "dotted_eighth", "dotted", "front_eight_back_sixteen", "dotted_eighth_sixteenth" ->
+                    SubdivisionPattern(booleanArrayOf(true, false, false, true))
+                "front_sixteen_back_eight", "sixteenth_dotted_eighth" ->
+                    SubdivisionPattern(booleanArrayOf(true, true, false, false))
+                else -> null
             }
         }
     }

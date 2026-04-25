@@ -41,6 +41,9 @@ class _MetronomeMainPageState extends State<MetronomeMainPage>
   List<BeatType> _beatPattern = _defaultBeatPattern(
     kTimeSignatures[3].beatsPerBar,
   );
+  List<BeatRhythmType> _beatRhythms = _defaultBeatRhythms(
+    kTimeSignatures[3].beatsPerBar,
+  );
   SoundProfile _accentSound = SoundProfile.accent;
   SoundProfile _regularSound = SoundProfile.wood;
   VoiceMode _voiceMode = VoiceMode.off;
@@ -61,6 +64,7 @@ class _MetronomeMainPageState extends State<MetronomeMainPage>
   DateTime? _practiceSessionStart;
   Duration _todayPracticeDuration = Duration.zero;
   List<PracticeLog> _practiceLogs = const [];
+  List<PracticeDaySummary> _practiceDaySummaries = const [];
   List<SavedMetronomePreset> _savedPresets = const [];
   String _webPageUrl = kDefaultWebPageUrl;
 
@@ -76,6 +80,7 @@ class _MetronomeMainPageState extends State<MetronomeMainPage>
     accentHaptics: _accentHaptics,
     subdivisionType: _subdivision.id,
     beatTypes: _beatPattern.map((type) => type.token).toList(),
+    beatRhythmTypes: _beatRhythms.map((type) => type.token).toList(),
   );
 
   /// 最近一次设置快照，用于 App 下次打开时恢复常用配置。
@@ -86,6 +91,7 @@ class _MetronomeMainPageState extends State<MetronomeMainPage>
     normalSoundId: _regularSound.token,
     vocalMode: _voiceMode.token,
     subdivisionType: _subdivision.id,
+    beatRhythmTypes: _beatRhythms.map((type) => type.token).toList(),
     webPageUrl: _webPageUrl,
   );
 
@@ -99,6 +105,47 @@ class _MetronomeMainPageState extends State<MetronomeMainPage>
 
   Duration get _visibleTodayPracticeDuration =>
       _todayPracticeDuration + _currentPracticeSessionDuration;
+
+  List<PracticeDaySummary> get _visiblePracticeDaySummaries {
+    final startedAt = _practiceSessionStart;
+    if (startedAt == null) {
+      return _practiceDaySummaries;
+    }
+
+    final sessionSeconds = _currentPracticeSessionDuration.inSeconds;
+    if (sessionSeconds <= 0) {
+      return _practiceDaySummaries;
+    }
+
+    final today = DateTime.now();
+    final todayKey = _dayKey(today);
+    final summaries = <PracticeDaySummary>[];
+    var mergedToday = false;
+    for (final summary in _practiceDaySummaries) {
+      if (_dayKey(summary.date) == todayKey) {
+        summaries.add(
+          PracticeDaySummary(
+            date: summary.date,
+            totalSeconds: summary.totalSeconds + sessionSeconds,
+            sessionCount: summary.sessionCount + 1,
+          ),
+        );
+        mergedToday = true;
+      } else {
+        summaries.add(summary);
+      }
+    }
+    if (!mergedToday) {
+      summaries.add(
+        PracticeDaySummary(
+          date: DateTime(today.year, today.month, today.day),
+          totalSeconds: sessionSeconds,
+          sessionCount: 1,
+        ),
+      );
+    }
+    return summaries;
+  }
 
   @override
   void initState() {
@@ -187,6 +234,10 @@ class _MetronomeMainPageState extends State<MetronomeMainPage>
       config.beatTypes,
       _signature.beatsPerBar,
     );
+    _beatRhythms = _beatRhythmsFromTokens(
+      config.beatRhythmTypes,
+      _signature.beatsPerBar,
+    );
     _accentSound = SoundProfile.fromToken(config.accentSound);
     _regularSound = SoundProfile.fromToken(config.regularSound);
     _voiceMode = VoiceMode.fromToken(config.vocalMode);
@@ -198,6 +249,10 @@ class _MetronomeMainPageState extends State<MetronomeMainPage>
     _bpm = settings.lastBpm.clamp(kMinBpm, kMaxBpm).toInt();
     _signature = _signatureFromLabel(settings.timeSignature, 4);
     _beatPattern = _resizeBeatPattern(_beatPattern, _signature.beatsPerBar);
+    _beatRhythms = _beatRhythmsFromTokens(
+      settings.beatRhythmTypes,
+      _signature.beatsPerBar,
+    );
     _accentSound = SoundProfile.fromToken(settings.accentSoundId);
     _regularSound = SoundProfile.fromToken(settings.normalSoundId);
     _voiceMode = VoiceMode.fromToken(settings.vocalMode);
@@ -209,13 +264,22 @@ class _MetronomeMainPageState extends State<MetronomeMainPage>
     final now = DateTime.now();
     final todayDuration = await _database.todayTotal(now);
     final logs = await _database.recentPracticeLogs(limit: 8);
+    final summaries = await _database.dailyPracticeSummaries(
+      start: now.subtract(const Duration(days: 370)),
+      end: now,
+    );
     if (!mounted) {
       return;
     }
     setState(() {
       _todayPracticeDuration = todayDuration;
       _practiceLogs = logs;
+      _practiceDaySummaries = summaries;
     });
+  }
+
+  Future<List<PracticeLog>> _practiceLogsForDay(DateTime day) {
+    return _database.practiceLogsForDay(day);
   }
 
   void _refreshPracticeTicker() {
@@ -462,6 +526,7 @@ class _MetronomeMainPageState extends State<MetronomeMainPage>
     setState(() {
       _signature = signature;
       _beatPattern = _resizeBeatPattern(_beatPattern, signature.beatsPerBar);
+      _beatRhythms = _resizeBeatRhythms(_beatRhythms, signature.beatsPerBar);
       _activeBeat = 0;
     });
     HapticFeedback.selectionClick();
@@ -484,46 +549,38 @@ class _MetronomeMainPageState extends State<MetronomeMainPage>
     unawaited(_syncConfiguration());
   }
 
-  /// 长按单拍的预留编辑面板。当前只展示类型和细分占位，后续可扩展单拍细分。
-  Future<void> _openBeatEditSheet(int index) async {
+  Future<void> _selectBeatRhythm(int index, BeatRhythmType rhythm) async {
+    if (index < 0 || index >= _beatRhythms.length) {
+      return;
+    }
+    if (_beatRhythms[index] == rhythm) {
+      return;
+    }
+
+    setState(() {
+      _beatRhythms = List<BeatRhythmType>.of(_beatRhythms);
+      _beatRhythms[index] = rhythm;
+    });
+    HapticFeedback.selectionClick();
+    _scheduleSettingsSave();
+    await _syncConfiguration();
+  }
+
+  Future<void> _openBeatRhythmSheet(int index) async {
     if (index < 0 || index >= _beatPattern.length) {
       return;
     }
 
     await showModalBottomSheet<void>(
       context: context,
+      isScrollControlled: true,
       backgroundColor: Colors.transparent,
       barrierColor: Colors.black.withValues(alpha: 0.58),
       builder: (context) {
-        final type = _beatPattern[index];
-        return _FunctionSheetFrame(
-          title: 'Beat ${index + 1}',
-          scrollController: ScrollController(),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _PreviewPanel(
-                icon: Icons.tune_rounded,
-                title: 'Current type',
-                value: type.label,
-                accent: type.color,
-              ),
-              const SizedBox(height: 16),
-              _PreviewPanel(
-                icon: Icons.graphic_eq_rounded,
-                title: 'Subdivision',
-                value: 'Reserved',
-                subtitle: 'Per-beat controls are coming',
-                accent: AppPalette.primary,
-              ),
-              const SizedBox(height: 18),
-              _SheetActionButton(
-                label: 'Confirm',
-                icon: Icons.check_rounded,
-                onPressed: () => Navigator.of(context).pop(),
-              ),
-            ],
-          ),
+        return _BeatRhythmPickerSheet(
+          beatNumber: index + 1,
+          selected: _beatRhythms[index],
+          onSelected: (rhythm) => _selectBeatRhythm(index, rhythm),
         );
       },
     );
@@ -651,6 +708,7 @@ class _MetronomeMainPageState extends State<MetronomeMainPage>
         beatsPerBar: _signature.beatsPerBar,
         noteValue: _signature.noteValue,
         beatPattern: _beatPattern.map((type) => type.token).toList(),
+        beatRhythmTypes: _beatRhythms.map((type) => type.token).toList(),
         subdivisionType: _subdivision.id,
         timerEnabled: _timerEnabled,
         timerSeconds: _timerRemaining.inSeconds > 0
@@ -679,6 +737,10 @@ class _MetronomeMainPageState extends State<MetronomeMainPage>
       _signature = nextSignature;
       _beatPattern = _beatPatternFromTokens(
         preset.beatPattern,
+        nextSignature.beatsPerBar,
+      );
+      _beatRhythms = _beatRhythmsFromTokens(
+        preset.beatRhythmTypes,
         nextSignature.beatsPerBar,
       );
       _subdivision = SubdivisionType.fromId(preset.subdivisionType);
@@ -890,10 +952,11 @@ class _MetronomeMainPageState extends State<MetronomeMainPage>
                           SizedBox(height: compact ? 24 : 34),
                           BeatPatternBar(
                             beatPattern: _beatPattern,
+                            beatRhythms: _beatRhythms,
                             activeBeat: _activeBeat,
                             isPlaying: _isPlaying,
                             onBeatTap: _cycleBeatType,
-                            onBeatLongPress: _openBeatEditSheet,
+                            onBeatLongPress: _openBeatRhythmSheet,
                           ),
                           SizedBox(height: compact ? 28 : 40),
                           _BpmDialWithPresetActions(
@@ -956,7 +1019,11 @@ class _MetronomeMainPageState extends State<MetronomeMainPage>
               SettingsPage(
                 todayPracticeDuration: _visibleTodayPracticeDuration,
                 currentSessionDuration: _currentPracticeSessionDuration,
+                currentSessionStartedAt: _practiceSessionStart,
+                currentBpm: _bpm,
                 practiceLogs: _practiceLogs,
+                practiceDaySummaries: _visiblePracticeDaySummaries,
+                onLoadPracticeLogsForDay: _practiceLogsForDay,
                 webPageUrl: _webPageUrl,
                 onWebPageUrlChanged: _updateWebPageUrl,
               )
