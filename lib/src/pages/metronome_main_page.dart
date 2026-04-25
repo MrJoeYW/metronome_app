@@ -62,6 +62,7 @@ class _MetronomeMainPageState extends State<MetronomeMainPage>
   Duration _todayPracticeDuration = Duration.zero;
   List<PracticeLog> _practiceLogs = const [];
   List<SavedMetronomePreset> _savedPresets = const [];
+  String _webPageUrl = kDefaultWebPageUrl;
 
   /// 当前 Flutter 配置快照，MethodChannel start/configure 都使用它。
   MetronomeConfig get _config => MetronomeConfig(
@@ -85,6 +86,7 @@ class _MetronomeMainPageState extends State<MetronomeMainPage>
     normalSoundId: _regularSound.token,
     vocalMode: _voiceMode.token,
     subdivisionType: _subdivision.id,
+    webPageUrl: _webPageUrl,
   );
 
   Duration get _currentPracticeSessionDuration {
@@ -154,6 +156,9 @@ class _MetronomeMainPageState extends State<MetronomeMainPage>
       } else if (settings != null) {
         _applyPersistedSettings(settings);
       }
+      if (settings != null) {
+        _webPageUrl = _normalizeWebPageUrl(settings.webPageUrl);
+      }
 
       if (status != null) {
         _isPlaying = status.isRunning;
@@ -197,6 +202,7 @@ class _MetronomeMainPageState extends State<MetronomeMainPage>
     _regularSound = SoundProfile.fromToken(settings.normalSoundId);
     _voiceMode = VoiceMode.fromToken(settings.vocalMode);
     _subdivision = SubdivisionType.fromId(settings.subdivisionType);
+    _webPageUrl = _normalizeWebPageUrl(settings.webPageUrl);
   }
 
   Future<void> _refreshPracticeSummary() async {
@@ -340,6 +346,34 @@ class _MetronomeMainPageState extends State<MetronomeMainPage>
   Future<void> _saveSettingsNow() async {
     _settingsSaveDebounce?.cancel();
     await _database.saveSettings(_settingsSnapshot);
+  }
+
+  Future<bool> _updateWebPageUrl(String rawUrl) async {
+    final normalized = _normalizeWebPageUrl(rawUrl);
+    if (normalized == _webPageUrl) {
+      return false;
+    }
+
+    setState(() {
+      _webPageUrl = normalized;
+    });
+    await _saveSettingsNow();
+    return true;
+  }
+
+  String _normalizeWebPageUrl(String rawUrl) {
+    final trimmed = rawUrl.trim();
+    if (trimmed.isEmpty) {
+      return kDefaultWebPageUrl;
+    }
+
+    final hasScheme = RegExp(r'^[a-zA-Z][a-zA-Z0-9+.-]*://').hasMatch(trimmed);
+    final withScheme = hasScheme ? trimmed : 'https://$trimmed';
+    final parsed = Uri.tryParse(withScheme);
+    if (parsed == null || parsed.host.trim().isEmpty) {
+      return kDefaultWebPageUrl;
+    }
+    return parsed.toString();
   }
 
   /// 全局播放开关：所有 UI 入口和定时器自动停止都走这里。
@@ -786,6 +820,7 @@ class _MetronomeMainPageState extends State<MetronomeMainPage>
           children: [
             if (_visitedTabs.contains(0))
               GuitarSocietyPage(
+                webPageUrl: _webPageUrl,
                 isPlaying: _isPlaying,
                 isBusy: _isTransportBusy,
                 onTogglePlayback: _togglePlayback,
@@ -922,6 +957,8 @@ class _MetronomeMainPageState extends State<MetronomeMainPage>
                 todayPracticeDuration: _visibleTodayPracticeDuration,
                 currentSessionDuration: _currentPracticeSessionDuration,
                 practiceLogs: _practiceLogs,
+                webPageUrl: _webPageUrl,
+                onWebPageUrlChanged: _updateWebPageUrl,
               )
             else
               const SizedBox.shrink(),

@@ -1,7 +1,8 @@
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 
-/// App 启动时自动恢复的“最近一次”基础设置。
+const String kDefaultWebPageUrl = 'https://www.jitashe.org/';
+
 class PersistedSettings {
   const PersistedSettings({
     required this.lastBpm,
@@ -10,6 +11,7 @@ class PersistedSettings {
     required this.normalSoundId,
     required this.vocalMode,
     required this.subdivisionType,
+    required this.webPageUrl,
   });
 
   final int lastBpm;
@@ -18,6 +20,7 @@ class PersistedSettings {
   final String normalSoundId;
   final String vocalMode;
   final int subdivisionType;
+  final String webPageUrl;
 
   bool get vocalModeEnabled => vocalMode != 'off';
 
@@ -31,6 +34,7 @@ class PersistedSettings {
       'vocal_mode_enabled': vocalModeEnabled ? 1 : 0,
       'voice_mode': vocalMode,
       'subdivision_type': subdivisionType,
+      'web_page_url': webPageUrl,
     };
   }
 
@@ -45,11 +49,11 @@ class PersistedSettings {
       normalSoundId: (map['normal_sound_id'] as String?) ?? 'wood',
       vocalMode: voiceMode ?? (vocalEnabled ? 'english' : 'off'),
       subdivisionType: (map['subdivision_type'] as int?) ?? 0,
+      webPageUrl: (map['web_page_url'] as String?) ?? kDefaultWebPageUrl,
     );
   }
 }
 
-/// 一次练习记录，用于今日累计和历史展示。
 class PracticeLog {
   const PracticeLog({
     required this.id,
@@ -75,8 +79,6 @@ class PracticeLog {
   }
 }
 
-/// 用户命名保存的完整节拍器配置。
-/// 包含 BPM、拍号、轻重拍模式、细分、定时和音色，恢复时可直接回写 UI 和原生引擎。
 class SavedMetronomePreset {
   const SavedMetronomePreset({
     required this.id,
@@ -151,11 +153,6 @@ class SavedMetronomePreset {
   }
 }
 
-/// sqflite 单例封装。
-///
-/// - Settings：保存最近一次配置。
-/// - PracticeLogs：保存练习时长记录。
-/// - SavedConfigs：保存用户命名配置。
 class MetronomeDatabase {
   MetronomeDatabase._();
 
@@ -172,7 +169,7 @@ class MetronomeDatabase {
     final dbPath = await getDatabasesPath();
     final database = await openDatabase(
       p.join(dbPath, 'pulse_grid.db'),
-      version: 2,
+      version: 3,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE Settings (
@@ -183,7 +180,8 @@ class MetronomeDatabase {
             normal_sound_id TEXT NOT NULL,
             vocal_mode_enabled INTEGER NOT NULL DEFAULT 0,
             voice_mode TEXT NOT NULL DEFAULT 'off',
-            subdivision_type INTEGER NOT NULL DEFAULT 0
+            subdivision_type INTEGER NOT NULL DEFAULT 0,
+            web_page_url TEXT NOT NULL DEFAULT '$kDefaultWebPageUrl'
           )
         ''');
         await db.execute('''
@@ -203,6 +201,14 @@ class MetronomeDatabase {
         if (oldVersion < 2) {
           await _createSavedConfigsTable(db);
         }
+        if (oldVersion < 3) {
+          await _addColumnIfMissing(
+            db,
+            tableName: 'Settings',
+            columnName: 'web_page_url',
+            definition: "TEXT NOT NULL DEFAULT '$kDefaultWebPageUrl'",
+          );
+        }
       },
     );
 
@@ -210,7 +216,6 @@ class MetronomeDatabase {
     return database;
   }
 
-  /// widget test 中 sqflite 可能没有初始化；这里吞掉该环境错误，让 UI 测试可跑。
   Future<Database?> _tryDatabase() async {
     try {
       return await database;
@@ -357,5 +362,20 @@ class MetronomeDatabase {
     await db.execute(
       'CREATE INDEX IF NOT EXISTS idx_saved_configs_updated_at ON SavedConfigs(updated_at)',
     );
+  }
+
+  static Future<void> _addColumnIfMissing(
+    Database db, {
+    required String tableName,
+    required String columnName,
+    required String definition,
+  }) async {
+    final columns = await db.rawQuery('PRAGMA table_info($tableName)');
+    final exists = columns.any((column) => column['name'] == columnName);
+    if (!exists) {
+      await db.execute(
+        'ALTER TABLE $tableName ADD COLUMN $columnName $definition',
+      );
+    }
   }
 }

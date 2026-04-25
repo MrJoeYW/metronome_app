@@ -14,9 +14,9 @@ void main() {
     expect(find.text('Wood'), findsOneWidget);
     expect(find.text('Dev'), findsOneWidget);
     expect(find.text('--'), findsOneWidget);
-    expect(find.text('吉他社'), findsOneWidget);
-    expect(find.text('节拍器'), findsOneWidget);
-    expect(find.text('设置'), findsOneWidget);
+    expect(find.text('Community'), findsOneWidget);
+    expect(find.text('\u8282\u62cd\u5668'), findsOneWidget);
+    expect(find.text('\u8bbe\u7f6e'), findsOneWidget);
     expect(find.byType(TopFunctionBar), findsOneWidget);
     expect(find.byType(BeatPatternBar), findsOneWidget);
     expect(find.byType(BottomNavigation), findsOneWidget);

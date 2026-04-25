@@ -297,6 +297,8 @@ class _TunerSheetState extends State<TunerSheet> {
   final MetronomeBridge _bridge = const MetronomeBridge();
   StreamSubscription<TunerPitchEvent>? _subscription;
   TunerPitchEvent _event = const TunerPitchEvent(status: TunerStatus.idle);
+  TunerReading? _stableReading;
+  Timer? _clearReadingTimer;
   bool _isRequestingPermission = false;
 
   @override
@@ -308,6 +310,7 @@ class _TunerSheetState extends State<TunerSheet> {
   @override
   void dispose() {
     _subscription?.cancel();
+    _clearReadingTimer?.cancel();
     super.dispose();
   }
 
@@ -323,6 +326,7 @@ class _TunerSheetState extends State<TunerSheet> {
         children: [
           _TunerDisplay(
             event: _event,
+            reading: _stableReading,
             onRequestPermission: _requestMicrophonePermission,
             isRequestingPermission: _isRequestingPermission,
           ),
@@ -346,9 +350,24 @@ class _TunerSheetState extends State<TunerSheet> {
         if (!mounted) {
           return;
         }
+        final reading = event.reading;
         setState(() {
           _event = event;
+          if (reading != null) {
+            _stableReading = reading;
+          }
         });
+        if (reading != null) {
+          _clearReadingTimer?.cancel();
+        } else if (event.status == TunerStatus.permissionDenied ||
+            event.status == TunerStatus.error) {
+          _clearReadingTimer?.cancel();
+          setState(() {
+            _stableReading = null;
+          });
+        } else {
+          _scheduleReadingClear();
+        }
       },
       onError: (_) {
         if (!mounted) {
@@ -356,9 +375,22 @@ class _TunerSheetState extends State<TunerSheet> {
         }
         setState(() {
           _event = const TunerPitchEvent(status: TunerStatus.error);
+          _stableReading = null;
         });
       },
     );
+  }
+
+  void _scheduleReadingClear() {
+    _clearReadingTimer?.cancel();
+    _clearReadingTimer = Timer(const Duration(milliseconds: 800), () {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _stableReading = null;
+      });
+    });
   }
 
   Future<void> _requestMicrophonePermission() async {
@@ -377,6 +409,9 @@ class _TunerSheetState extends State<TunerSheet> {
       _event = TunerPitchEvent(
         status: granted ? TunerStatus.listening : TunerStatus.permissionDenied,
       );
+      if (!granted) {
+        _stableReading = null;
+      }
     });
     if (granted) {
       _startListening();
@@ -657,17 +692,30 @@ class _PreviewPanel extends StatelessWidget {
 class _TunerDisplay extends StatelessWidget {
   const _TunerDisplay({
     required this.event,
+    required this.reading,
     required this.onRequestPermission,
     required this.isRequestingPermission,
   });
 
   final TunerPitchEvent event;
+  final TunerReading? reading;
   final VoidCallback onRequestPermission;
   final bool isRequestingPermission;
 
   @override
   Widget build(BuildContext context) {
-    final reading = event.reading;
+    final displayReading = reading;
+    final hasReading = displayReading != null;
+    final noteName = displayReading?.noteName ?? '--';
+    final frequencyText = displayReading == null
+        ? '-- Hz'
+        : '${displayReading.frequency.toStringAsFixed(1)} Hz';
+    final centsText = displayReading?.centsText ?? '0 cents';
+    final helperText = switch (event.status) {
+      TunerStatus.noSignal => 'Waiting for a stable single note',
+      TunerStatus.listening || TunerStatus.idle => 'Play a single note',
+      _ => event.status.label,
+    };
 
     return Container(
       width: double.infinity,
@@ -699,21 +747,15 @@ class _TunerDisplay extends StatelessWidget {
               icon: const Icon(Icons.mic_rounded),
               label: Text(isRequestingPermission ? 'Requesting' : 'Enable mic'),
             ),
-          ] else if (reading == null) ...[
-            Icon(
-              event.status == TunerStatus.error
-                  ? Icons.warning_rounded
-                  : Icons.mic_rounded,
+          ] else if (event.status == TunerStatus.error) ...[
+            const Icon(
+              Icons.warning_rounded,
               size: 42,
-              color: event.status == TunerStatus.error
-                  ? AppPalette.danger
-                  : const Color(0xFF7AD7A8),
+              color: AppPalette.danger,
             ),
             const SizedBox(height: 12),
             Text(
-              event.status == TunerStatus.error
-                  ? 'Tuner unavailable'
-                  : 'Listening',
+              'Tuner unavailable',
               style: Theme.of(context).textTheme.titleLarge?.copyWith(
                 color: AppPalette.textPrimary,
                 fontWeight: FontWeight.w900,
@@ -721,9 +763,7 @@ class _TunerDisplay extends StatelessWidget {
             ),
             const SizedBox(height: 6),
             Text(
-              event.status == TunerStatus.noSignal
-                  ? 'No stable pitch detected'
-                  : 'Play a single note near the microphone',
+              'Check microphone access and try again',
               textAlign: TextAlign.center,
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                 color: AppPalette.textSecondary,
@@ -731,24 +771,43 @@ class _TunerDisplay extends StatelessWidget {
               ),
             ),
           ] else ...[
-            Text(
-              reading.noteName,
-              style: Theme.of(context).textTheme.displayMedium?.copyWith(
-                color: AppPalette.textPrimary,
-                fontWeight: FontWeight.w900,
-                letterSpacing: 0,
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 160),
+              child: Text(
+                noteName,
+                key: ValueKey(noteName),
+                style: Theme.of(context).textTheme.displayMedium?.copyWith(
+                  color: hasReading
+                      ? AppPalette.textPrimary
+                      : AppPalette.textSecondary,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 0,
+                ),
               ),
             ),
             const SizedBox(height: 4),
-            Text(
-              '${reading.frequency.toStringAsFixed(1)}Hz  |  ${reading.centsText}',
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                color: AppPalette.textSecondary,
-                fontWeight: FontWeight.w800,
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 160),
+              child: Text(
+                '$frequencyText  |  $centsText',
+                key: ValueKey('$frequencyText-$centsText'),
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                  color: AppPalette.textSecondary,
+                  fontWeight: FontWeight.w800,
+                ),
               ),
             ),
             const SizedBox(height: 18),
-            _TunerNeedle(cents: reading.cents),
+            _TunerNeedle(cents: displayReading?.cents ?? 0),
+            const SizedBox(height: 12),
+            Text(
+              helperText,
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: AppPalette.textSecondary,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
           ],
         ],
       ),

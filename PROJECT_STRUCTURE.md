@@ -245,3 +245,11 @@ kotlin.caching.enabled=false
 - `lib/src/sheets/function_sheets.dart`、`metronome_settings_sheet.dart`：拍号、音色、调音器、定时器和历史遗留综合设置抽屉。
 - `lib/src/pages/webview_page.dart`、`settings_page.dart`：WebView 页、练习统计页、底部导航。
 - `lib/src/models/tap_tempo.dart`、`metronome_models.dart`：Tap Tempo 纯逻辑、节拍器/调音器模型、Flutter 和 Android 通道封装。
+
+## 2026-04-25 WebView and Tuner Update
+
+- `lib/metronome_database.dart`: database version is now `3`. `Settings` stores `web_page_url` with default `https://www.jitashe.org/`; older databases add the column during upgrade. `PersistedSettings` now carries this URL with the existing metronome settings snapshot.
+- `lib/src/pages/metronome_main_page.dart`: keeps `_webPageUrl` in top-level app state, normalizes empty or scheme-less user input, persists it immediately, and passes it to both the WebView page and settings page.
+- `lib/src/pages/webview_page.dart`: the first tab remains kept alive by `IndexedStack`, loads the configured URL, reloads when that URL changes, adds a bottom WebView back button using `canGoBack/goBack`, and makes the floating Start/Stop control semi-transparent while sharing the same transport state as the main page.
+- `lib/src/pages/settings_page.dart`: bottom navigation first tab is now `Community`, and the settings page includes a `Community page` URL editor with save and reset-to-default actions.
+- `lib/src/sheets/function_sheets.dart`: tuner display now keeps one stable layout for ordinary listening/no-signal states. It caches the latest stable reading for about 800ms, then shows `--`, `-- Hz`, centered needle, and helper text instead of swapping to a separate Listening layout. Permission denied and hard tuner errors still show dedicated status panels.

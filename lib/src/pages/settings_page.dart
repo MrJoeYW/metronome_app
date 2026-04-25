@@ -7,11 +7,15 @@ class SettingsPage extends StatelessWidget {
     required this.todayPracticeDuration,
     required this.currentSessionDuration,
     required this.practiceLogs,
+    required this.webPageUrl,
+    required this.onWebPageUrlChanged,
   });
 
   final Duration todayPracticeDuration;
   final Duration currentSessionDuration;
   final List<PracticeLog> practiceLogs;
+  final String webPageUrl;
+  final Future<bool> Function(String url) onWebPageUrlChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -111,8 +115,149 @@ class SettingsPage extends StatelessWidget {
               todayDuration: todayPracticeDuration,
               logs: practiceLogs,
             ),
+            const SizedBox(height: 22),
+            _WebPageSettingsPanel(
+              webPageUrl: webPageUrl,
+              onChanged: onWebPageUrlChanged,
+            ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _WebPageSettingsPanel extends StatefulWidget {
+  const _WebPageSettingsPanel({
+    required this.webPageUrl,
+    required this.onChanged,
+  });
+
+  final String webPageUrl;
+  final Future<bool> Function(String url) onChanged;
+
+  @override
+  State<_WebPageSettingsPanel> createState() => _WebPageSettingsPanelState();
+}
+
+class _WebPageSettingsPanelState extends State<_WebPageSettingsPanel> {
+  late final TextEditingController _controller;
+  var _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.webPageUrl);
+  }
+
+  @override
+  void didUpdateWidget(covariant _WebPageSettingsPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.webPageUrl != widget.webPageUrl) {
+      _controller.text = widget.webPageUrl;
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    if (_saving) {
+      return;
+    }
+
+    setState(() {
+      _saving = true;
+    });
+    final changed = await widget.onChanged(_controller.text);
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _saving = false;
+      if (!changed) {
+        _controller.text = widget.webPageUrl;
+      }
+    });
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(changed ? 'Web page updated.' : 'Web page unchanged.'),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: AppPalette.surface,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppPalette.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.public_rounded, color: AppPalette.secondary),
+              const SizedBox(width: 10),
+              Text(
+                'Community page',
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                  color: AppPalette.textPrimary,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          TextField(
+            controller: _controller,
+            enabled: !_saving,
+            style: const TextStyle(color: AppPalette.textPrimary),
+            keyboardType: TextInputType.url,
+            textInputAction: TextInputAction.done,
+            decoration: InputDecoration(
+              labelText: 'Web address',
+              hintText: kDefaultWebPageUrl,
+              prefixIcon: const Icon(Icons.link_rounded),
+              suffixIcon: IconButton(
+                tooltip: 'Use default',
+                onPressed: _saving
+                    ? null
+                    : () {
+                        _controller.text = kDefaultWebPageUrl;
+                      },
+                icon: const Icon(Icons.restore_rounded),
+              ),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+            onSubmitted: (_) => unawaited(_save()),
+          ),
+          const SizedBox(height: 12),
+          FilledButton.icon(
+            onPressed: _saving ? null : _save,
+            icon: Icon(
+              _saving ? Icons.hourglass_top_rounded : Icons.save_rounded,
+            ),
+            label: Text(_saving ? 'Saving' : 'Save page'),
+            style: FilledButton.styleFrom(
+              minimumSize: const Size.fromHeight(46),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -287,7 +432,7 @@ class BottomNavigation extends StatelessWidget {
       destinations: const [
         NavigationDestination(
           icon: Icon(Icons.public_rounded),
-          label: '\u5409\u4ed6\u793e',
+          label: 'Community',
         ),
         NavigationDestination(
           icon: Icon(Icons.speed_rounded),
