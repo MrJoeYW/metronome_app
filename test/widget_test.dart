@@ -40,7 +40,7 @@ void main() {
     expect(find.text('Meter'), findsOneWidget);
     expect(find.text('Meter wheels'), findsOneWidget);
     expect(find.text('Quick meters'), findsOneWidget);
-    expect(find.text('Confirm'), findsOneWidget);
+    expect(find.text('Apply'), findsOneWidget);
   });
 
   testWidgets('Beat pattern cells cycle type on tap', (

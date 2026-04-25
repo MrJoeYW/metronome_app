@@ -1,5 +1,9 @@
 package com.example.metronome_app
 
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
@@ -12,6 +16,9 @@ import io.flutter.plugin.common.MethodChannel
  * 产生的 beat 事件推回 Flutter UI。
  */
 class MainActivity : FlutterActivity() {
+    private var pendingMicrophonePermissionResult: MethodChannel.Result? = null
+    private var tunerAnalyzer: TunerAnalyzer? = null
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
@@ -49,6 +56,10 @@ class MainActivity : FlutterActivity() {
                     result.success(MetronomeStateStore.snapshot())
                 }
 
+                "requestMicrophonePermission" -> {
+                    requestMicrophonePermission(result)
+                }
+
                 else -> result.notImplemented()
             }
         }
@@ -69,10 +80,74 @@ class MainActivity : FlutterActivity() {
                 }
             },
         )
+
+        EventChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            TUNER_CHANNEL,
+        ).setStreamHandler(
+            object : EventChannel.StreamHandler {
+                override fun onListen(arguments: Any?, events: EventChannel.EventSink) {
+                    if (!hasMicrophonePermission()) {
+                        events.success(mapOf("status" to "permissionDenied"))
+                        return
+                    }
+                    tunerAnalyzer?.stop()
+                    tunerAnalyzer = TunerAnalyzer(applicationContext, events).also { it.start() }
+                }
+
+                override fun onCancel(arguments: Any?) {
+                    tunerAnalyzer?.stop()
+                    tunerAnalyzer = null
+                }
+            },
+        )
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray,
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != MICROPHONE_PERMISSION_REQUEST) {
+            return
+        }
+
+        val granted = grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED
+        pendingMicrophonePermissionResult?.success(granted)
+        pendingMicrophonePermissionResult = null
+    }
+
+    private fun requestMicrophonePermission(result: MethodChannel.Result) {
+        if (hasMicrophonePermission()) {
+            result.success(true)
+            return
+        }
+
+        if (pendingMicrophonePermissionResult != null) {
+            result.success(false)
+            return
+        }
+
+        pendingMicrophonePermissionResult = result
+        ActivityCompat.requestPermissions(
+            this,
+            arrayOf(Manifest.permission.RECORD_AUDIO),
+            MICROPHONE_PERMISSION_REQUEST,
+        )
+    }
+
+    private fun hasMicrophonePermission(): Boolean {
+        return ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.RECORD_AUDIO,
+        ) == PackageManager.PERMISSION_GRANTED
     }
 
     companion object {
         private const val CONTROL_CHANNEL = "metronome/control"
         private const val BEAT_CHANNEL = "metronome/beat_events"
+        private const val TUNER_CHANNEL = "tuner/pitch_events"
+        private const val MICROPHONE_PERMISSION_REQUEST = 5007
     }
 }
