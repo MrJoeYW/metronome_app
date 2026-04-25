@@ -24,7 +24,7 @@ void main() {
     expect(find.text('4/4'), findsNothing);
     expect(find.text('1/4'), findsNothing);
     expect(find.text('TAP TEMPO'), findsOneWidget);
-    expect(find.byType(SingleChildScrollView), findsOneWidget);
+    expect(find.byType(SingleChildScrollView), findsNothing);
     expect(find.text('Session Settings'), findsNothing);
   });
 

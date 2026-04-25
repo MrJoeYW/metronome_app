@@ -796,109 +796,121 @@ class _MetronomeMainPageState extends State<MetronomeMainPage>
               builder: (context, constraints) {
                 final compact = constraints.maxHeight < 740;
                 final horizontalPadding = compact ? 16.0 : 20.0;
+                final safePadding = MediaQuery.paddingOf(context);
+                final verticalPadding = compact ? 34.0 : 40.0;
+                final presetActionExtraHeight = 28.0;
+                final layoutSafetyInset = 6.0;
+                final fixedContentHeight =
+                    64.0 + // top function bar
+                    (compact ? 24.0 : 34.0) +
+                    64.0 + // beat pattern bar
+                    (compact ? 28.0 : 40.0) +
+                    presetActionExtraHeight +
+                    (compact ? 24.0 : 30.0) +
+                    (compact ? 84.0 : 88.0) + // transport panel
+                    layoutSafetyInset;
+                final maxDialByHeight =
+                    constraints.maxHeight -
+                    safePadding.vertical -
+                    verticalPadding -
+                    fixedContentHeight;
                 final pulse =
                     1 - Curves.easeOutCubic.transform(_pulseController.value);
                 final dialSize = math.min(
-                  constraints.maxWidth - (horizontalPadding * 2),
-                  compact ? 268.0 : 346.0,
+                  math.min(
+                    constraints.maxWidth - (horizontalPadding * 2),
+                    compact ? 268.0 : 346.0,
+                  ),
+                  math.max(160.0, maxDialByHeight),
                 );
 
                 return ColoredBox(
                   color: AppPalette.background,
                   child: SafeArea(
                     bottom: true,
-                    child: SingleChildScrollView(
-                      physics: const BouncingScrollPhysics(),
+                    child: Padding(
                       padding: EdgeInsets.fromLTRB(
                         horizontalPadding,
                         12,
                         horizontalPadding,
                         compact ? 22 : 28,
                       ),
-                      child: ConstrainedBox(
-                        constraints: BoxConstraints(
-                          minHeight:
-                              constraints.maxHeight -
-                              MediaQuery.paddingOf(context).vertical -
-                              (compact ? 26 : 30),
-                        ),
-                        child: Column(
-                          children: [
-                            TopFunctionBar(
-                              signatureLabel: _signature.label,
-                              soundLabel: _regularSound.label,
-                              timerLabel: _timerEnabled
-                                  ? _formatTimerDuration(_timerRemaining)
-                                  : null,
-                              onSignatureTap: () =>
-                                  _openFunctionSheet(_FunctionSheet.signature),
-                              onSoundTap: () =>
-                                  _openFunctionSheet(_FunctionSheet.sound),
-                              onTunerTap: () =>
-                                  _openFunctionSheet(_FunctionSheet.tuner),
-                              onTimerTap: () =>
-                                  _openFunctionSheet(_FunctionSheet.timer),
-                            ),
-                            SizedBox(height: compact ? 24 : 34),
-                            BeatPatternBar(
-                              beatPattern: _beatPattern,
-                              activeBeat: _activeBeat,
-                              isPlaying: _isPlaying,
-                              onBeatTap: _cycleBeatType,
-                              onBeatLongPress: _openBeatEditSheet,
-                            ),
-                            SizedBox(height: compact ? 28 : 40),
-                            _BpmDialWithPresetActions(
-                              bpm: _bpm,
-                              min: kMinBpm,
-                              max: kMaxBpm,
-                              pulseAmount: pulse,
-                              size: dialSize,
-                              canLoad: _savedPresets.isNotEmpty,
-                              onChanged: (value) =>
-                                  _updateBpm(value, resetTapTempoBuffer: true),
-                              onTapTempo: () => unawaited(_handleTapTempo()),
-                              onSave: _openSavePresetDialog,
-                              onLoad: _openLoadPresetSheet,
-                            ),
-                            SizedBox(height: compact ? 24 : 30),
-                            TransportPanel(
-                              isPlaying: _isPlaying,
-                              isBusy: _isTransportBusy,
-                              compact: compact,
-                              onTogglePlayback: _togglePlayback,
-                            ),
-                            if (!_nativeEngineAvailable) ...[
-                              SizedBox(height: compact ? 18 : 24),
-                              Container(
-                                width: double.infinity,
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 14,
-                                  vertical: 10,
+                      child: Column(
+                        children: [
+                          TopFunctionBar(
+                            signatureLabel: _signature.label,
+                            soundLabel: _regularSound.label,
+                            timerLabel: _timerEnabled
+                                ? _formatTimerDuration(_timerRemaining)
+                                : null,
+                            onSignatureTap: () =>
+                                _openFunctionSheet(_FunctionSheet.signature),
+                            onSoundTap: () =>
+                                _openFunctionSheet(_FunctionSheet.sound),
+                            onTunerTap: () =>
+                                _openFunctionSheet(_FunctionSheet.tuner),
+                            onTimerTap: () =>
+                                _openFunctionSheet(_FunctionSheet.timer),
+                          ),
+                          SizedBox(height: compact ? 24 : 34),
+                          BeatPatternBar(
+                            beatPattern: _beatPattern,
+                            activeBeat: _activeBeat,
+                            isPlaying: _isPlaying,
+                            onBeatTap: _cycleBeatType,
+                            onBeatLongPress: _openBeatEditSheet,
+                          ),
+                          SizedBox(height: compact ? 28 : 40),
+                          _BpmDialWithPresetActions(
+                            bpm: _bpm,
+                            min: kMinBpm,
+                            max: kMaxBpm,
+                            pulseAmount: pulse,
+                            size: dialSize,
+                            canLoad: _savedPresets.isNotEmpty,
+                            onChanged: (value) =>
+                                _updateBpm(value, resetTapTempoBuffer: true),
+                            onTapTempo: () => unawaited(_handleTapTempo()),
+                            onSave: _openSavePresetDialog,
+                            onLoad: _openLoadPresetSheet,
+                          ),
+                          SizedBox(height: compact ? 24 : 30),
+                          TransportPanel(
+                            isPlaying: _isPlaying,
+                            isBusy: _isTransportBusy,
+                            compact: compact,
+                            onTogglePlayback: _togglePlayback,
+                          ),
+                          if (!_nativeEngineAvailable) ...[
+                            SizedBox(height: compact ? 18 : 24),
+                            Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 14,
+                                vertical: 10,
+                              ),
+                              decoration: BoxDecoration(
+                                color: AppPalette.danger.withValues(
+                                  alpha: 0.10,
                                 ),
-                                decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(
                                   color: AppPalette.danger.withValues(
-                                    alpha: 0.10,
+                                    alpha: 0.36,
                                   ),
-                                  borderRadius: BorderRadius.circular(8),
-                                  border: Border.all(
-                                    color: AppPalette.danger.withValues(
-                                      alpha: 0.36,
-                                    ),
-                                  ),
-                                ),
-                                child: Text(
-                                  'Preview mode only. Low-latency playback, WakeLock, and audio focus need a real Android device.',
-                                  style: Theme.of(context).textTheme.bodySmall
-                                      ?.copyWith(
-                                        color: AppPalette.textPrimary,
-                                        fontWeight: FontWeight.w600,
-                                      ),
                                 ),
                               ),
-                            ],
+                              child: Text(
+                                'Preview mode only. Low-latency playback, WakeLock, and audio focus need a real Android device.',
+                                style: Theme.of(context).textTheme.bodySmall
+                                    ?.copyWith(
+                                      color: AppPalette.textPrimary,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                              ),
+                            ),
                           ],
-                        ),
+                        ],
                       ),
                     ),
                   ),
