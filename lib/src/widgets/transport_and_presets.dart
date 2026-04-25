@@ -1,4 +1,4 @@
-﻿part of '../../main.dart';
+part of '../../main.dart';
 
 class TransportPanel extends StatelessWidget {
   const TransportPanel({
@@ -87,12 +87,11 @@ class _BpmDialWithPresetActions extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final actionTop = size + 8;
-    final horizontalInset = math.max(18.0, size * 0.16);
+    final actionTop = size * 0.78;
 
     return SizedBox(
       width: size,
-      height: size + 60,
+      height: size,
       child: Stack(
         clipBehavior: Clip.hardEdge,
         alignment: Alignment.topCenter,
@@ -107,7 +106,7 @@ class _BpmDialWithPresetActions extends StatelessWidget {
             onTapTempo: onTapTempo,
           ),
           Positioned(
-            left: horizontalInset,
+            left: 0,
             top: actionTop,
             child: _DialCornerAction(
               icon: Icons.bookmark_add_outlined,
@@ -116,7 +115,7 @@ class _BpmDialWithPresetActions extends StatelessWidget {
             ),
           ),
           Positioned(
-            right: horizontalInset,
+            right: 0,
             top: actionTop,
             child: _DialCornerAction(
               icon: Icons.folder_open_rounded,

@@ -1,4 +1,4 @@
-﻿part of '../../main.dart';
+part of '../../main.dart';
 
 /// 缁楊兛绨╂潪顕€鍣搁弸鍕倵閿涘本鎸遍弨鍓уЦ閹線娉︽稉顓炴躬鏉╂瑩鍣风粻锛勬倞閿?/// - 鎼存洟鍎寸€佃壈鍩呮稉澶愩€夐崗杈╂暏閸氬奔绔存總?Start/Stop 閻樿埖鈧降鈧?/// - 妫ｆ牠銆夐幐澶愭尦閵嗕箘ebView 閹剚璇為幐澶愭尦閵嗕礁鈧帟顓搁弮鍓佺波閺夌喖鍏樻导姘崇殶閻劌鎮撴稉鈧弶鈩冩尡閺€鎹愮熅瀵板嫨鈧?/// - Flutter 闁板秶鐤嗛柅姘崇箖 [MetronomeBridge] 閸氬本顒炵紒?Android 閸樼喓鏁撻懞鍌涘瀵洘鎼搁妴?
 class MetronomeMainPage extends StatefulWidget {
@@ -802,9 +802,7 @@ class _MetronomeMainPageState extends State<MetronomeMainPage>
                   child: SafeArea(
                     bottom: true,
                     child: SingleChildScrollView(
-                      physics: compact
-                          ? const BouncingScrollPhysics()
-                          : const NeverScrollableScrollPhysics(),
+                      physics: const BouncingScrollPhysics(),
                       padding: EdgeInsets.fromLTRB(
                         horizontalPadding,
                         12,
@@ -857,7 +855,7 @@ class _MetronomeMainPageState extends State<MetronomeMainPage>
                               onSave: _openSavePresetDialog,
                               onLoad: _openLoadPresetSheet,
                             ),
-                            SizedBox(height: compact ? 34 : 44),
+                            SizedBox(height: compact ? 24 : 30),
                             TransportPanel(
                               isPlaying: _isPlaying,
                               isBusy: _isTransportBusy,
