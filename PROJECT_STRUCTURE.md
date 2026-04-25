@@ -227,3 +227,21 @@ kotlin.caching.enabled=false
 - 练习统计不再放首页，后续可在独立页面实现类似 GitHub contribution calendar 的练琴日历。
 - Tap Tempo 逻辑继续保持纯 Dart 可测试，不要和 UI 动画耦合。
 - WebView 只代表 Android/iOS 移动端真实体验，桌面或 Web 壳工程不代表最终低延迟播放表现。
+
+## 2026-04-25 UI 调整记录
+
+- `lib/main.dart` 主节拍器页在 BPM 圆盘外侧下方左右角新增纯图标 `Save` / `Load` 配置快捷入口，避免遮挡圆盘；命名保存使用独立弹窗组件，载入使用较高的底部抽屉，删除后抽屉列表会立即刷新并提示，原 `SavedConfigs` 本地持久化方案保持不变。
+- 主节拍器页加大 BPM、配置快捷入口、Start/Stop 控制区之间的竖向间距，Start/Stop 位置整体下移，移动端小高度场景继续使用滚动容器。
+- 底部第三页从配置管理改为 `Practice Stats`，只展示练习统计：今日累计、当前会话、最近记录数量、近期总时长、平均 BPM 和最近练习历史；不包含排行榜。
+- 练习统计状态由 `_MetronomeMainPageState` 维护，启动、恢复、停止练习时通过 `PracticeLogs` 刷新 `todayTotal` 和 `recentPracticeLogs`，当前正在播放的会话时长会叠加到今日展示值。
+
+## 2026-04-25 Dart 代码拆分记录
+
+- `lib/main.dart` 现在只保留 app 入口、主题装配和 `part` 声明，原 5000+ 行单文件按业务拆到 `lib/src/`。
+- `lib/src/pages/metronome_main_page.dart`：顶层节拍器状态、播放控制、保存/载入入口调度、倒计时和练习记录刷新。
+- `lib/src/widgets/bpm_dial.dart`：BPM 圆盘、拖动/微调/点击节奏控件、圆盘绘制器。
+- `lib/src/widgets/transport_and_presets.dart`：Start/Stop 区域、Save/Load 圆盘外侧图标按钮、保存弹窗、加载抽屉和抽屉内删除反馈。
+- `lib/src/widgets/top_function_bar.dart`、`beat_pattern.dart`、`selectors.dart`：首页顶部功能入口、轻重拍编辑条、通用选择控件。
+- `lib/src/sheets/function_sheets.dart`、`metronome_settings_sheet.dart`：拍号、音色、调音器、定时器和历史遗留综合设置抽屉。
+- `lib/src/pages/webview_page.dart`、`settings_page.dart`：WebView 页、练习统计页、底部导航。
+- `lib/src/models/tap_tempo.dart`、`metronome_models.dart`：Tap Tempo 纯逻辑、节拍器/调音器模型、Flutter 和 Android 通道封装。
