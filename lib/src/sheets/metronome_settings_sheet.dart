@@ -1,6 +1,7 @@
-﻿part of '../../main.dart';
+part of '../../main.dart';
 
-/// 缁楊兛绔存潪顕€浠愰悾娆戞畱缂佺厧鎮庣拋鍓х枂閹惰棄鐪介妴?/// 瑜版挸澧犳稉缁樼ウ缁嬪鍑￠弨閫涜礋妞ゅ爼鍎撮崶娑楅嚋閸旂喕鍏橀幎钘夌溄閿涘奔绻氶悾娆愵劃缂佸嫪娆㈡担婊€璐熼崢鍡楀蕉/閸氬海鐢婚弫鏉戞値閸欏倽鈧啨鈧?
+/// 历史遗留的综合设置抽屉。
+/// 当前主流程已经拆为顶部四个功能抽屉，保留此组件作为后续整合参考。
 class MetronomeSettingsSheet extends StatefulWidget {
   const MetronomeSettingsSheet({
     super.key,

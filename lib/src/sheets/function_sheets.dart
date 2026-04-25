@@ -1,6 +1,6 @@
-﻿part of '../../main.dart';
+part of '../../main.dart';
 
-/// 闁告瑥鏈划瀛樻姜椤旂厧鐎婚柛鎺濆亰閳ь剙顦扮€氥劑骞忓鍡樻闁告粌鐭傞悡鍓佺箔閿旇姤顦ч柛濠勩€嬬槐婵婄疀椤愶絽绁归柟宄扮Т閻庨鎷归悢鑽ょ厬闊浂鍋婇埀顒傚枙閻戯附娼鈧悥鍫曟偨閵娧呯煁闁告艾鐗勯埀?
+/// 拍号抽屉：双滚轮选择拍数和音符时值，快捷拍型负责快速跳转常用组合。
 class TimeSignatureSheet extends StatefulWidget {
   const TimeSignatureSheet({
     super.key,
@@ -128,8 +128,9 @@ class _TimeSignatureSheetState extends State<TimeSignatureSheet> {
   }
 }
 
-/// 闂傚﹤鐤囨竟濠囧箮閽樺婧勯柕?///
-/// 缂佹鍏涚花鈺傛姜椤曗偓濞撹泛效閸屾繍娲ｆ慨鐟板€瑰▓蹇旂▔瀹ュ棗鈷栭悘鐐存礈濠€锛勨偓鍦仱閻撹泛鈹冮幇鎵冲亾閺勫繒甯嗛柨娑樿嫰濞叉粌顫㈤妶鍫㈢闂佹彃濂旂€靛瞼鎲版担椋庣▕濞?UI 闁稿繈鍎辫ぐ娑㈠椽瀹€鈧獮鍥嫉婢舵劗鍙鹃柤瑙勫絻閻⊙冣枔閻㈢數妞介弶鍫熷灟閳?
+/// 音色抽屉。
+///
+/// 当前先提供 UI 选择和配置同步，真实音源替换可在原生层继续扩展。
 class SoundPresetSheet extends StatefulWidget {
   const SoundPresetSheet({
     super.key,
@@ -281,7 +282,8 @@ class _SoundPresetSheetState extends State<SoundPresetSheet> {
   }
 }
 
-/// 閻犲鍟撮悡鍫曞闯閵婏箑鈻曢悘鐐差槶閳?/// 闂侇偅淇虹换?Android 闁告鍠撻弫?AudioRecord 濞存粌顑勫▎銏犆规担瑙勨枖缂佲偓閾忚鍩傞悗鍦仱鐎规娊宕楃€ｎ噮妫戦悹鍥ф閸╁棛绱掗幘瀵镐函闁?
+/// 调音器抽屉。
+/// 通过 Android 原生 AudioRecord 和基频分析事件显示实时音高。
 class TunerSheet extends StatefulWidget {
   const TunerSheet({super.key, required this.scrollController});
 
@@ -382,7 +384,8 @@ class _TunerSheetState extends State<TunerSheet> {
   }
 }
 
-/// 閻庤纰嶅鍌炲闯閵婏箑鈻曢悘鐐差槶閳?/// Apply 闁告艾绨肩槐浼村触椤栨艾袟濡絾鐗犻妴澶愭偐閼哥鍋撴担鐤幀闁汇劌瀚埀顒佸笩椤撴悂寮拋鍦闁稿﹥甯熼鎼佸籍鐠鸿櫣绉洪梻鍡樺劶閸ゆ粓宕濋妸銉ょ不婵縿鍨归崣蹇曚沪閳ь剟鎳為崒娑橆€為柛锝冨妸閳?
+/// 定时器抽屉。
+/// Apply 后把定时配置交给首页状态，归零时由首页统一停止播放。
 class TimerSheet extends StatefulWidget {
   const TimerSheet({
     super.key,

@@ -1,6 +1,6 @@
-﻿part of '../../main.dart';
+part of '../../main.dart';
 
-/// BPM 閸﹀棛娲忛敍姘樆閸﹀牊瀚嬮崝銊ㄧ殶闁噦绱濇稉顓炵妇閻愮懓鍤?Tap Tempo閿涘奔鑵戣箛?+/- 閺€顖涘瘮瀵邦喛鐨熼崪宀勬毐閹稿绻涚拫鍐︹偓?
+/// BPM 圆盘：外圈拖动调速，中心 Tap Tempo，+/- 支持微调和长按连调。
 class BpmDial extends StatefulWidget {
   const BpmDial({
     super.key,

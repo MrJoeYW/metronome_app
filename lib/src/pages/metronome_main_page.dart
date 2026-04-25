@@ -1,6 +1,10 @@
 part of '../../main.dart';
 
-/// 缁楊兛绨╂潪顕€鍣搁弸鍕倵閿涘本鎸遍弨鍓уЦ閹線娉︽稉顓炴躬鏉╂瑩鍣风粻锛勬倞閿?/// - 鎼存洟鍎寸€佃壈鍩呮稉澶愩€夐崗杈╂暏閸氬奔绔存總?Start/Stop 閻樿埖鈧降鈧?/// - 妫ｆ牠銆夐幐澶愭尦閵嗕箘ebView 閹剚璇為幐澶愭尦閵嗕礁鈧帟顓搁弮鍓佺波閺夌喖鍏樻导姘崇殶閻劌鎮撴稉鈧弶鈩冩尡閺€鎹愮熅瀵板嫨鈧?/// - Flutter 闁板秶鐤嗛柅姘崇箖 [MetronomeBridge] 閸氬本顒炵紒?Android 閸樼喓鏁撻懞鍌涘瀵洘鎼搁妴?
+/// 顶层节拍器页面容器。
+///
+/// - 底部三页共享同一套 Start/Stop 状态。
+/// - 首页按钮、WebView 悬浮按钮、倒计时结束都走同一条播放路径。
+/// - Flutter 配置通过 [MetronomeBridge] 同步给 Android 原生节拍引擎。
 class MetronomeMainPage extends StatefulWidget {
   const MetronomeMainPage({super.key});
 
@@ -27,11 +31,11 @@ class _MetronomeMainPageState extends State<MetronomeMainPage>
   Timer? _settingsSaveDebounce;
   Timer? _countdownTicker;
 
-  // BottomNavigation 閻ㄥ嫬缍嬮崜宥夈€夐敍? 閸氬绮粈?WebView閵? 閼哄倹濯块崳銊ｂ偓? 鐠佸墽鐤嗛妴?
+  // BottomNavigation 当前页：0 WebView，1 节拍器，2 设置。
   int _selectedTab = 1;
   final Set<int> _visitedTabs = {1};
 
-  // 閺嶇绺鹃懞鍌涘闁板秶鐤嗛妴鍌濈箹娴滄稑鐡у▓鍏哥窗缂佸嫬鎮庨幋?MetronomeConfig 娑撳褰傜紒?Android閵?
+  // 核心节拍配置，这些字段会组合成 MetronomeConfig 下发给 Android。
   int _bpm = 120;
   TimeSignature _signature = kTimeSignatures[3];
   List<BeatType> _beatPattern = _defaultBeatPattern(
@@ -42,12 +46,12 @@ class _MetronomeMainPageState extends State<MetronomeMainPage>
   VoiceMode _voiceMode = VoiceMode.off;
   SubdivisionType _subdivision = SubdivisionType.quarter;
 
-  // 閸婃帟顓搁弮鍫曞帳缂冾喓鈧繓timerDuration 閺勵垳鏁ら幋鐤啎缂冾喖鈧》绱漘timerRemaining 閺勵垵绻嶇悰灞艰厬閸撯晙缍戦崐绗衡偓?
+  // 倒计时配置：timerDuration 是用户设置值，timerRemaining 是运行中的剩余值。
   bool _timerEnabled = false;
   Duration _timerDuration = Duration.zero;
   Duration _timerRemaining = Duration.zero;
 
-  // 鏉╂劘顢戦幀浣风瑢閸樼喓鏁撳鏇熸惛閻樿埖鈧降鈧倹澧嶉張澶嬫尡閺€鎯у弳閸欙綁鍏橀崣顏呮暭鏉╂瑩鍣烽敍宀勪缉閸忓秴顦挎い鐢告桨閻樿埖鈧焦绱撶粔姹団偓?
+  // 运行态与原生引擎状态。所有播放入口都只改这里，避免多页面状态漂移。
   bool _accentHaptics = true;
   bool _isPlaying = false;
   bool _nativeEngineAvailable = true;
@@ -59,7 +63,7 @@ class _MetronomeMainPageState extends State<MetronomeMainPage>
   List<PracticeLog> _practiceLogs = const [];
   List<SavedMetronomePreset> _savedPresets = const [];
 
-  /// 瑜版挸澧?Flutter 闁板秶鐤嗚箛顐ゅ弾閿涘本澧嶉張?MethodChannel start/configure 闁垝濞囬悽銊ョ暊閵?
+  /// 当前 Flutter 配置快照，MethodChannel start/configure 都使用它。
   MetronomeConfig get _config => MetronomeConfig(
     bpm: _bpm,
     beatsPerBar: _signature.beatsPerBar,
@@ -73,7 +77,7 @@ class _MetronomeMainPageState extends State<MetronomeMainPage>
     beatTypes: _beatPattern.map((type) => type.token).toList(),
   );
 
-  /// 鏉炲鍣洪垾婊€绗傚▎陇顔曠純顔光偓婵嗘彥閻撗嶇礉閻劋绨?App 娑撳顐奸幍鎾崇磻閺冭埖浠径宥呯埗閻劑鍘ょ純顔衡偓?
+  /// 最近一次设置快照，用于 App 下次打开时恢复常用配置。
   PersistedSettings get _settingsSnapshot => PersistedSettings(
     lastBpm: _bpm,
     timeSignature: _signature.label,
@@ -325,7 +329,7 @@ class _MetronomeMainPageState extends State<MetronomeMainPage>
     });
   }
 
-  // 鐠佸墽鐤嗘穱婵嗙摠閸?1 缁夋帡妲婚幎鏍电礉闁灝鍘ら幏鏍уЗ BPM 閹存牞绻涚紒顓犲仯閹峰秴鐎烽弮鍫曨暥缁讳礁鍟撴惔鎾扁偓?
+  // 设置保存做 1 秒防抖，避免拖动 BPM 或连续点拍型时频繁写库。
   void _scheduleSettingsSave() {
     _settingsSaveDebounce?.cancel();
     _settingsSaveDebounce = Timer(const Duration(seconds: 1), () {
@@ -338,13 +342,14 @@ class _MetronomeMainPageState extends State<MetronomeMainPage>
     await _database.saveSettings(_settingsSnapshot);
   }
 
-  /// 閸忋劌鐪幘顓熸杹瀵偓閸忕绱伴幍鈧張?UI 閸忋儱褰涢崪灞界暰閺冭泛娅掗懛顏勫З閸嬫粍顒涢柈鍊熻泲鏉╂瑩鍣烽妴?
+  /// 全局播放开关：所有 UI 入口和定时器自动停止都走这里。
   Future<void> _togglePlayback() async {
     await _setPlayback(!_isPlaying);
   }
 
-  /// 鐎圭偤妾?Start/Stop 閹笛嗩攽閸戣姤鏆熼妴?  ///
-  /// shouldStart=true 閺冭泛鎯庨崝?Android 閸撳秴褰撮張宥呭閿涙矤alse 閺冭泛浠犲銏℃箛閸斺€宠嫙缂佹挾鐣荤紒鍐х瘎鐠佹澘缍嶉妴?
+  /// 实际 Start/Stop 执行函数。
+  ///
+  /// shouldStart=true 时启动 Android 前台服务；false 时停止服务并结算练习记录。
   Future<void> _setPlayback(bool shouldStart) async {
     if (_isTransportBusy) {
       return;
@@ -430,7 +435,8 @@ class _MetronomeMainPageState extends State<MetronomeMainPage>
     await _syncConfiguration();
   }
 
-  /// 閸楁洘濯挎潪濠氬櫢缁鐎峰顏嗗箚閿涙瓈ight -> Secondary -> Accent -> Rest -> Light閵?  /// 閺€鐟板З閸氬海鐝涢崚璇叉倱濮濄儳绮伴崢鐔烘晸鐏炲偊绱漅est 閹靛秷鍏橀崷銊︽尡閺€鍙ヨ厬閸楄櫕妞傞棃娆撶叾閵?
+  /// 单拍轻重类型循环：Light -> Secondary -> Accent -> Rest -> Light。
+  /// 改动后立即同步给原生层，Rest 才能在播放中即时静音。
   void _cycleBeatType(int index) {
     if (index < 0 || index >= _beatPattern.length) {
       return;
@@ -444,7 +450,7 @@ class _MetronomeMainPageState extends State<MetronomeMainPage>
     unawaited(_syncConfiguration());
   }
 
-  /// 闂€鎸庡瘻閸楁洘濯块惃鍕暕閻ｆ瑧绱潏鎴︽桨閺夎￥鈧倸缍嬮崜宥呭涧鐏炴洜銇氱猾璇茬€烽崪宀€绮忛崚鍡楀窗娴ｅ稄绱濋崥搴ｇ敾閸欘垱澧跨仦鏇炲礋閹峰秶绮忛崚鍡愨偓?
+  /// 长按单拍的预留编辑面板。当前只展示类型和细分占位，后续可扩展单拍细分。
   Future<void> _openBeatEditSheet(int index) async {
     if (index < 0 || index >= _beatPattern.length) {
       return;
@@ -549,7 +555,7 @@ class _MetronomeMainPageState extends State<MetronomeMainPage>
     }
   }
 
-  /// Apply 閸氬骸鎯庨崝?UI 閸婃帟顓搁弮璁圭幢瑜版帡娴傞弮鍫曗偓姘崇箖閸忋劌鐪幘顓熸杹鐠侯垰绶為崑婊勵剾閼哄倹濯块崳銊ｂ偓?
+  /// Apply 后启动 UI 倒计时；归零时通过全局播放路径停止节拍器。
   void _startCountdown() {
     _countdownTicker?.cancel();
     if (!_timerEnabled || _timerRemaining <= Duration.zero) {
@@ -624,7 +630,7 @@ class _MetronomeMainPageState extends State<MetronomeMainPage>
     await _refreshSavedPresets();
   }
 
-  /// 娴犲氦顔曠純顕€銆夐幁銏狀槻瀹歌弓绻氱€涙﹢鍘ょ純顕嗙礉楠炲墎鐝涢崡鍐叉倱濮濄儳绮?Android 瀵洘鎼搁妴?
+  /// 恢复已保存配置，并立即同步给 Android 引擎。
   Future<void> _restorePreset(SavedMetronomePreset preset) async {
     final nextSignature = TimeSignature(
       label: preset.timeSignature,

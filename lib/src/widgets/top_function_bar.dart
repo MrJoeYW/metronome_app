@@ -1,6 +1,7 @@
-﻿part of '../../main.dart';
+part of '../../main.dart';
 
-/// 棣栭〉椤堕儴鍥涗釜鍔熻兘鍏ュ彛锛氭媿鍙枫€侀煶鑹层€佽皟闊冲櫒銆佸畾鏃跺櫒銆?/// 姣忎釜鍏ュ彛鍙墦寮€鎶藉眽锛屼笉鐩存帴鎶婂鏉傝缃爢鍦ㄩ椤点€?
+/// 首页顶部四个功能入口：拍号、音色、调音器、定时器。
+/// 每个入口只打开抽屉，不直接把复杂设置堆在首页。
 class TopFunctionBar extends StatelessWidget {
   const TopFunctionBar({
     super.key,
@@ -69,7 +70,7 @@ class TopFunctionBar extends StatelessWidget {
   }
 }
 
-/// 椤堕儴鍔熻兘鎸夐挳鐨勯€氱敤澶栬锛屼繚鎸佸浐瀹氶珮搴﹂伩鍏嶄笉鍚屾枃瀛楀鑷存姈鍔ㄣ€?
+/// 顶部功能按钮的通用外观，保持固定高度以避免不同文字导致跳动。
 class FunctionButton extends StatelessWidget {
   const FunctionButton({
     super.key,
@@ -125,4 +126,4 @@ class FunctionButton extends StatelessWidget {
   }
 }
 
-/// 棣栭〉杞婚噸鎷嶇紪杈戞潯銆?///
+/// 首页轻重拍编辑条。

@@ -1,6 +1,6 @@
-﻿part of '../../main.dart';
+part of '../../main.dart';
 
-/// 閺冄呭閹峰秴褰块柅澶嬪閸忋儱褰涢敍灞肩箽閻ｆ瑧鏁ゆ禍搴″悑鐎硅绁寸拠鏇熷灗閺堫亝娼甸幏鍡楀瀻閺冭泛寮懓鍐︹偓?
+/// 通用选择器组件，供拍号、细分等底部面板复用。
 class TimeSignatureSelector extends StatelessWidget {
   const TimeSignatureSelector({
     super.key,

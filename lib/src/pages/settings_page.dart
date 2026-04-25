@@ -1,6 +1,6 @@
 part of '../../main.dart';
 
-/// 鐠佸墽鐤嗘い纰夌窗閸欘亜鐫嶇粈铏圭矊娑旂姷绮虹拋鈽呯礉娑撳秵澹欐潪鑺ュ笓鐞涘本顪侀幋鏍帳缂冾喚顓搁悶鍡愨偓?
+/// 设置页当前只展示练习统计，不承载排行榜或配置管理。
 class SettingsPage extends StatelessWidget {
   const SettingsPage({
     super.key,
@@ -196,7 +196,7 @@ class _PracticeMetricGrid extends StatelessWidget {
   }
 }
 
-/// 瀹歌弓绻氱€涙﹢鍘ょ純顔炬畱閸掓銆冩い鐧哥礉鐏炴洜銇氶柊宥囩枂閹芥顩﹂獮鑸靛絹娓氭稒浠径?閸掔娀娅庨幙宥勭稊閵?
+/// 已保存配置的列表项，展示配置摘要并提供恢复/删除操作。
 class _SavedPresetTile extends StatelessWidget {
   const _SavedPresetTile({
     required this.preset,
@@ -265,7 +265,7 @@ class _SavedPresetTile extends StatelessWidget {
   }
 }
 
-/// 娑撳銆夋惔鏇㈠劥鐎佃壈鍩呴敍姘倧娴犳牜銇為妴浣藉Ν閹峰秴娅掗妴浣筋啎缂冾喓鈧?
+/// 三页底部导航：WebView、节拍器、设置。
 class BottomNavigation extends StatelessWidget {
   const BottomNavigation({
     super.key,

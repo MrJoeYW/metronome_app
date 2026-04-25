@@ -87,11 +87,11 @@ class _BpmDialWithPresetActions extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final actionTop = size * 0.78;
+    final actionTop = size * 0.86;
 
     return SizedBox(
       width: size,
-      height: size,
+      height: size + 28,
       child: Stack(
         clipBehavior: Clip.hardEdge,
         alignment: Alignment.topCenter,
@@ -362,5 +362,3 @@ class _SavePresetDialogState extends State<_SavePresetDialog> {
     );
   }
 }
-
-/// 鎷嶅彿鎶藉眽銆?///

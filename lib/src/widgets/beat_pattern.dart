@@ -1,6 +1,7 @@
-﻿part of '../../main.dart';
+part of '../../main.dart';
 
-/// 濮ｅ繋閲?Cell 閺勫墽銇氶幏宥呭娇閺佹澘鐡ч敍宀€鏁ゆ妯哄閸滃矂顤侀懝鑼躲€冩潏?Accent/Secondary/Light/Rest閵?/// 閻愮懓鍤顏嗗箚缁鐎烽敍宀勬毐閹稿澧﹀鈧崡鏇熷缂傛牞绶０鍕殌闂堛垺婢橀妴?
+/// 轻重拍编辑条。每个 Cell 表示一拍，可循环切换 Accent/Secondary/Light/Rest。
+/// 播放时会高亮当前拍，Rest 拍会在原生层静音。
 class BeatPatternBar extends StatelessWidget {
   const BeatPatternBar({
     super.key,
@@ -45,7 +46,7 @@ class BeatPatternBar extends StatelessWidget {
   }
 }
 
-/// 閸楁洑閲滈幏宥呯摍閻ㄥ嫬褰查悙鐟板毊閺岃京濮搁崡鏇炲帗閵?
+/// 单个拍点格子，显示拍号并响应点击/长按。
 class BeatPatternCell extends StatelessWidget {
   const BeatPatternCell({
     super.key,
@@ -111,7 +112,8 @@ class BeatPatternCell extends StatelessWidget {
   }
 }
 
-/// 娴犲懐鏁ゆ禍搴㈡尡閺€鐐閻ㄥ嫬浜曢崹瀣Ν閹峰秶浼呯紒鍕閵?/// 缁楊兛绨╂潪顕€顩绘い闈涘嚒缁夊娅庢稉濠冩煙鏉╂稑瀹抽悘顖ょ礉濮濄倗绮嶆禒鑸垫畯閻ｆ瑧绮伴崥搴ｇ敾閸欘垵鍏橀惃鍕毈閸ㄥ濮搁幀浣哥潔缁€鎭掆偓?
+/// 轻量拍点指示条，用于在播放时展示当前拍位置。
+/// 目前首页主视觉已经由 Cell 承担，这个组件保留给后续布局复用。
 class BeatIndicatorStrip extends StatelessWidget {
   const BeatIndicatorStrip({
     super.key,

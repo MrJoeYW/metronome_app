@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
@@ -24,7 +24,7 @@ part 'src/sheets/metronome_settings_sheet.dart';
 part 'src/models/tap_tempo.dart';
 part 'src/models/metronome_models.dart';
 
-/// App 鍚姩鍏ュ彛锛氬厛閿佸畾娌夋蹈寮忕郴缁?UI锛屽啀杩涘叆 Flutter 椤甸潰鏍戙€?
+/// App 启动入口：先启用沉浸式系统 UI，再进入 Flutter 页面树。
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await _applyImmersiveMode();
@@ -74,4 +74,4 @@ class MyApp extends StatelessWidget {
   }
 }
 
-/// 椤跺眰椤甸潰瀹瑰櫒銆?///
+/// 应用根组件，配置全局暗色主题。

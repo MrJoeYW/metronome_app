@@ -1,6 +1,8 @@
-﻿part of '../../main.dart';
+part of '../../main.dart';
 
-/// 閸氬绮粈鍓х秹妞ょ敻銆夌粵淇扁偓?/// WebView 閸愬懎褰告稉瀣潡閻ㄥ嫭璇為崝?Start/Stop 閸滃矂顩绘い鍨瘻闁筋喖鍙℃禍顐㈡倱娑撯偓娑擃亝鎸遍弨鍓уЦ閹降鈧?
+/// 左侧 WebView 页面。
+///
+/// WebView 内右下角的浮动 Start/Stop 和首页按钮共享同一个播放状态。
 class GuitarSocietyPage extends StatefulWidget {
   const GuitarSocietyPage({
     super.key,

@@ -1,4 +1,4 @@
-﻿part of '../../main.dart';
+part of '../../main.dart';
 
 class TimeSignature {
   const TimeSignature({
@@ -25,7 +25,7 @@ class TimeSignature {
   int get hashCode => Object.hash(label, beatsPerBar, noteValue);
 }
 
-/// 鍗曟媿绫诲瀷銆倀oken 浼氫紶缁?Android 鍘熺敓灞傦紝Rest 浠ｈ〃鏁存媿闈欓煶銆?
+/// 单拍类型。token 会传给 Android 原生层，Rest 代表整拍静音。
 enum BeatType {
   accent('accent', 'Accent', 'A', AppPalette.secondary, 56),
   secondary('secondary', 'Secondary', 'S', AppPalette.primary, 42),
@@ -216,7 +216,7 @@ enum VoiceMode {
   }
 }
 
-/// 褰撳墠鍐呯疆 SoundPool 闊宠壊 token銆?
+/// 当前内置 SoundPool 音色 token。
 enum SoundProfile {
   accent(
     'accent',
@@ -271,7 +271,7 @@ enum SoundProfile {
   }
 }
 
-/// Flutter -> Android 鐨勫畬鏁磋妭鎷嶉厤缃浇鑽枫€?
+/// Flutter -> Android 的完整节拍器配置载荷。
 class MetronomeConfig {
   const MetronomeConfig({
     required this.bpm,
@@ -332,7 +332,7 @@ class MetronomeConfig {
   }
 }
 
-/// Android getStatus 杩斿洖鐨勮繍琛岀姸鎬佸揩鐓с€?
+/// Android getStatus 返回的运行状态快照。
 class MetronomeStatus {
   const MetronomeStatus({
     required this.isRunning,
@@ -360,7 +360,7 @@ class MetronomeStatus {
   }
 }
 
-/// Android EventChannel 鎺ㄩ€佺殑姣忔鑺傛媿浜嬩欢銆?
+/// Android EventChannel 推送的每次节拍事件。
 class BeatEvent {
   const BeatEvent({
     required this.beatIndex,
@@ -487,7 +487,7 @@ const List<String> kNoteNames = [
   'B',
 ];
 
-/// MethodChannel/EventChannel 鐨勮杽灏佽锛岄殧绂?Flutter UI 鍜?Android 骞冲彴璋冪敤銆?
+/// MethodChannel/EventChannel 的薄封装，隔离 Flutter UI 和 Android 平台调用。
 class MetronomeBridge {
   const MetronomeBridge();
 
