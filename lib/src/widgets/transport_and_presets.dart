@@ -335,39 +335,32 @@ class _SavePresetDialogState extends State<_SavePresetDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final viewInsets = MediaQuery.viewInsetsOf(context);
-
-    return AnimatedPadding(
-      duration: const Duration(milliseconds: 180),
-      curve: Curves.easeOutCubic,
-      padding: EdgeInsets.fromLTRB(16, 16, 16, viewInsets.bottom + 16),
-      child: AlertDialog(
-        scrollable: true,
-        insetPadding: EdgeInsets.zero,
-        backgroundColor: AppPalette.surface,
-        title: const Text('Save configuration'),
-        content: TextField(
-          controller: _controller,
-          autofocus: true,
-          style: const TextStyle(color: AppPalette.textPrimary),
-          textInputAction: TextInputAction.done,
-          decoration: const InputDecoration(
-            labelText: 'Configuration name',
-            labelStyle: TextStyle(color: AppPalette.textSecondary),
-          ),
-          onSubmitted: (value) => Navigator.of(context).pop(value),
+    return AlertDialog(
+      scrollable: true,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 36, vertical: 24),
+      backgroundColor: AppPalette.surface,
+      title: const Text('Save configuration'),
+      content: TextField(
+        controller: _controller,
+        autofocus: true,
+        style: const TextStyle(color: AppPalette.textPrimary),
+        textInputAction: TextInputAction.done,
+        decoration: const InputDecoration(
+          labelText: 'Configuration name',
+          labelStyle: TextStyle(color: AppPalette.textSecondary),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(_controller.text),
-            child: const Text('Save'),
-          ),
-        ],
+        onSubmitted: (value) => Navigator.of(context).pop(value),
       ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(_controller.text),
+          child: const Text('Save'),
+        ),
+      ],
     );
   }
 }

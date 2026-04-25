@@ -250,18 +250,27 @@ class MetronomeEngine(
             // quarter 继续使用全局 subdivisionType，避免破坏旧的细分控制。
             return when (type) {
                 "eighth", "eighth_pair" -> SubdivisionPattern(booleanArrayOf(true, true))
-                "eighth_rest" -> SubdivisionPattern(booleanArrayOf(true, false))
-                "rest_eighth" -> SubdivisionPattern(booleanArrayOf(false, true))
                 "eighth_triplet", "sixteenth_triplet" -> SubdivisionPattern(booleanArrayOf(true, true, true))
-                "triplet_rest_first" -> SubdivisionPattern(booleanArrayOf(false, true, true))
-                "triplet_rest_middle" -> SubdivisionPattern(booleanArrayOf(true, false, true))
-                "triplet_rest_last" -> SubdivisionPattern(booleanArrayOf(true, true, false))
                 "sixteenth", "thirty_second", "sixteenth_four" ->
                     SubdivisionPattern(booleanArrayOf(true, true, true, true))
-                "dotted_eighth", "dotted", "front_eight_back_sixteen", "dotted_eighth_sixteenth" ->
+                "dotted_eighth", "dotted", "dotted_eighth_sixteenth" ->
                     SubdivisionPattern(booleanArrayOf(true, false, false, true))
-                "front_sixteen_back_eight", "sixteenth_dotted_eighth" ->
+                "sixteenth_dotted_eighth" ->
                     SubdivisionPattern(booleanArrayOf(true, true, false, false))
+                "front_eight_back_sixteen", "eighth_two_sixteenth" ->
+                    SubdivisionPattern(booleanArrayOf(true, false, true, true))
+                "front_sixteen_back_eight", "two_sixteenth_eighth" ->
+                    SubdivisionPattern(booleanArrayOf(true, true, true, false))
+                "sixteenth_eighth_sixteenth" ->
+                    SubdivisionPattern(booleanArrayOf(true, true, false, true))
+                "triplet_sixteenth" ->
+                    SubdivisionPattern(booleanArrayOf(true, true, true, true))
+                "eighth_rest", "rest_eighth", "triplet_rest_first" ->
+                    SubdivisionPattern(booleanArrayOf(true, true, true))
+                "triplet_rest_middle" ->
+                    SubdivisionPattern(booleanArrayOf(true, false, false, true))
+                "triplet_rest_last" ->
+                    SubdivisionPattern(booleanArrayOf(true, false, true, true))
                 else -> null
             }
         }

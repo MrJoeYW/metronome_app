@@ -72,7 +72,8 @@ void main() {
 
     expect(find.text('Beat 1 rhythm'), findsOneWidget);
     expect(find.text('四分音符'), findsWidgets);
-    expect(find.text('三连音'), findsOneWidget);
+    expect(find.text('八分三连音'), findsOneWidget);
+    expect(BeatRhythmType.values.length, 10);
   });
 
   test('Metronome config serializes rest beat pattern', () {

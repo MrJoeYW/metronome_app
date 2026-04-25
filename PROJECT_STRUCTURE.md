@@ -271,7 +271,7 @@ kotlin.caching.enabled=false
 
 ## 2026-04-26 Rhythm Assets and Overflow Fixes
 
-- `assets/images/subdivision-1.webp` through `subdivision-10.webp`: rhythm picker note/rest/triplet artwork supplied as local image assets and loaded through the existing `assets/images/` pubspec declaration.
-- `lib/src/models/metronome_models.dart`: each `BeatRhythmType` now carries an `assetPath` for its picker/beat-cell glyph while retaining the slot-count playback behavior.
+- `assets/images/subdivision-1.webp` through `subdivision-10.webp`: ten rhythm picker note/triplet artwork assets loaded through the existing `assets/images/` pubspec declaration.
+- `lib/src/models/metronome_models.dart`: `BeatRhythmType` is aligned one-to-one with the ten subdivision assets, each carrying an `assetPath` plus slot-count playback behavior. Old removed rhythm tokens are mapped to the closest current asset-backed type when loading persisted configs.
 - `lib/src/widgets/beat_pattern.dart`: rhythm glyph rendering now prefers the local WebP assets with color filtering, falling back to the custom painter only if an asset fails to load. Rest beat cells are taller so empty beats no longer overflow.
-- `lib/src/widgets/transport_and_presets.dart`: the save-configuration dialog now accounts for keyboard `viewInsets` and is scrollable, preventing bottom overflow when the text field auto-focuses.
+- `lib/src/pages/metronome_main_page.dart` and `lib/src/widgets/transport_and_presets.dart`: the main scaffold no longer resizes under the keyboard, and the save-configuration dialog accounts for keyboard `viewInsets` with scrollable content, preventing bottom overflow when the text field auto-focuses.

@@ -868,6 +868,7 @@ class _MetronomeMainPageState extends State<MetronomeMainPage>
         systemNavigationBarIconBrightness: Brightness.light,
       ),
       child: Scaffold(
+        resizeToAvoidBottomInset: false,
         bottomNavigationBar: BottomNavigation(
           selectedIndex: _selectedTab,
           onDestinationSelected: (index) {
