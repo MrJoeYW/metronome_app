@@ -9,13 +9,87 @@ void main() {
     await tester.pumpWidget(const MyApp());
     await tester.pump();
 
-    expect(find.text('Start Pulse'), findsOneWidget);
-    expect(find.text('4/4'), findsOneWidget);
+    expect(find.text('Start'), findsOneWidget);
     expect(find.text('5/4'), findsOneWidget);
+    expect(find.text('Wood'), findsOneWidget);
+    expect(find.text('Dev'), findsOneWidget);
+    expect(find.text('--'), findsOneWidget);
+    expect(find.text('吉他社'), findsOneWidget);
+    expect(find.text('节拍器'), findsOneWidget);
+    expect(find.text('设置'), findsOneWidget);
+    expect(find.byType(TopFunctionBar), findsOneWidget);
+    expect(find.byType(BeatPatternBar), findsOneWidget);
+    expect(find.byType(BottomNavigation), findsOneWidget);
+    expect(find.text('BEAT'), findsNothing);
+    expect(find.text('4/4'), findsNothing);
     expect(find.text('1/4'), findsNothing);
     expect(find.text('TAP TEMPO'), findsOneWidget);
-    expect(find.byType(SingleChildScrollView), findsNothing);
+    expect(find.byType(SingleChildScrollView), findsOneWidget);
     expect(find.text('Session Settings'), findsNothing);
+  });
+
+  testWidgets('Top meter button opens bottom sheet controls', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(const MyApp());
+    await tester.pump();
+
+    await tester.tap(find.text('5/4'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Meter'), findsOneWidget);
+    expect(find.text('Meter wheels'), findsOneWidget);
+    expect(find.text('Quick meters'), findsOneWidget);
+    expect(find.text('Confirm'), findsOneWidget);
+  });
+
+  testWidgets('Beat pattern cells cycle type on tap', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(const MyApp());
+    await tester.pump();
+
+    var cell = tester.widget<BeatPatternCell>(
+      find.byType(BeatPatternCell).at(1),
+    );
+    expect(cell.type, BeatType.light);
+
+    await tester.tap(find.byType(BeatPatternCell).at(1));
+    await tester.pump();
+
+    cell = tester.widget<BeatPatternCell>(find.byType(BeatPatternCell).at(1));
+    expect(cell.type, BeatType.secondary);
+  });
+
+  testWidgets('Beat pattern long press opens reserved editor', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(const MyApp());
+    await tester.pump();
+
+    await tester.longPress(find.byType(BeatPatternCell).first);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Beat 1'), findsOneWidget);
+    expect(find.text('Current type'), findsOneWidget);
+    expect(find.text('Subdivision'), findsOneWidget);
+  });
+
+  test('Metronome config serializes rest beat pattern', () {
+    final config = MetronomeConfig(
+      bpm: 120,
+      beatsPerBar: 4,
+      noteValue: 4,
+      timeSignature: '4/4',
+      accentSound: 'accent',
+      regularSound: 'wood',
+      vocalMode: 'off',
+      accentHaptics: true,
+      subdivisionType: 0,
+      beatTypes: const ['accent', 'light', 'rest', 'light'],
+    );
+
+    expect(config.toMap()['beatTypes'], contains('rest'));
   });
 
   testWidgets('Bpm dial outer ring responds to drag', (

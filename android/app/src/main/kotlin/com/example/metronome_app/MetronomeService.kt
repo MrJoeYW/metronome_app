@@ -22,6 +22,12 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import java.util.Locale
 
+/**
+ * Android 前台播放服务。
+ *
+ * 这里负责所有“离开 Flutter UI 仍要可靠运行”的能力：前台通知、音频焦点、
+ * WakeLock、振动、TTS 数拍，以及 MetronomeEngine 的生命周期。
+ */
 class MetronomeService : Service(), AudioManager.OnAudioFocusChangeListener {
     private lateinit var engine: MetronomeEngine
     private lateinit var audioManager: AudioManager
@@ -46,10 +52,29 @@ class MetronomeService : Service(), AudioManager.OnAudioFocusChangeListener {
 
         engine = MetronomeEngine(
             context = applicationContext,
-            onBeat = { beatIndex, beatsPerBar, cycleCount, timestampNanos, _ ->
-                BeatEventEmitter.emit(beatIndex, beatsPerBar, cycleCount, timestampNanos)
+            onBeat = {
+                    beatIndex,
+                    beatsPerBar,
+                    cycleCount,
+                    timestampNanos,
+                    _,
+                    subdivisionIndex,
+                    subdivisionSlots,
+                    isSilent,
+                ->
+                BeatEventEmitter.emit(
+                    beatIndex,
+                    beatsPerBar,
+                    cycleCount,
+                    timestampNanos,
+                    subdivisionIndex,
+                    subdivisionSlots,
+                    isSilent,
+                )
             },
+            // 只有原生引擎判定为强拍且非 Rest 时才会触发这里。
             onAccent = { triggerAccentHaptic() },
+            // TTS 数拍同样由引擎过滤 Rest 后触发。
             onVoice = { beatIndex, config -> speakBeat(beatIndex, config) },
         )
 
@@ -82,6 +107,7 @@ class MetronomeService : Service(), AudioManager.OnAudioFocusChangeListener {
 
     override fun onAudioFocusChange(focusChange: Int) {
         when (focusChange) {
+            // 临时失去焦点时暂停调度，恢复焦点后继续，避免和其他音频抢占。
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
                 if (engine.isRunning()) {
                     shouldResumeOnFocusGain = true
@@ -90,6 +116,7 @@ class MetronomeService : Service(), AudioManager.OnAudioFocusChangeListener {
                 }
             }
 
+            // 如果是临时暂停，焦点回来后恢复播放。
             AudioManager.AUDIOFOCUS_GAIN -> {
                 if (shouldResumeOnFocusGain) {
                     shouldResumeOnFocusGain = false
@@ -99,6 +126,7 @@ class MetronomeService : Service(), AudioManager.OnAudioFocusChangeListener {
                 }
             }
 
+            // 永久失焦直接停止服务，释放 WakeLock 和音频焦点。
             AudioManager.AUDIOFOCUS_LOSS -> {
                 shouldResumeOnFocusGain = false
                 stopPlayback(stopService = true)
@@ -107,6 +135,7 @@ class MetronomeService : Service(), AudioManager.OnAudioFocusChangeListener {
     }
 
     private fun startPlayback(config: MetronomeConfig) {
+        // 先进入前台服务，再申请音频焦点，避免 Android 后台限制杀掉播放。
         MetronomeStateStore.latestConfig = config
         startForeground(NOTIFICATION_ID, buildNotification(config, "Starting foreground service"))
 
@@ -128,6 +157,7 @@ class MetronomeService : Service(), AudioManager.OnAudioFocusChangeListener {
     }
 
     private fun applyConfiguration(config: MetronomeConfig) {
+        // 播放中调整 BPM、拍号、拍型、音色等配置时走这里，不重启服务。
         MetronomeStateStore.latestConfig = config
         engine.updateConfig(config)
         prepareVoice(config.vocalMode)
@@ -137,6 +167,7 @@ class MetronomeService : Service(), AudioManager.OnAudioFocusChangeListener {
     }
 
     private fun stopPlayback(stopService: Boolean) {
+        // 所有停止路径统一清理资源，保持 Flutter getStatus 能拿到一致状态。
         shouldResumeOnFocusGain = false
         engine.stop()
         MetronomeStateStore.isRunning = false
@@ -205,6 +236,7 @@ class MetronomeService : Service(), AudioManager.OnAudioFocusChangeListener {
     }
 
     private fun prepareVoice(mode: String) {
+        // TTS 初始化较重，只有开启语言数拍时才懒加载。
         currentVoiceMode = mode
         if (mode == "off") {
             textToSpeech?.stop()
@@ -302,7 +334,7 @@ class MetronomeService : Service(), AudioManager.OnAudioFocusChangeListener {
             .setContentText("${config.bpm} BPM | ${config.timeSignature} | $status")
             .setStyle(
                 NotificationCompat.BigTextStyle().bigText(
-                    "Accent ${config.accentSound} / Regular ${config.regularSound} | Vocal ${config.vocalMode}",
+                    "Accent ${config.accentSound} / Regular ${config.regularSound} | Vocal ${config.vocalMode} | Subdivision ${config.subdivisionType}",
                 ),
             )
             .setOngoing(true)
@@ -325,6 +357,7 @@ class MetronomeService : Service(), AudioManager.OnAudioFocusChangeListener {
             listOf("\u4e00", "\u4e8c", "\u4e09", "\u56db", "\u4e94", "\u516d")
 
         fun start(context: Context, config: MetronomeConfig) {
+            // Android O+ 必须通过 startForegroundService 启动前台播放服务。
             val intent =
                 Intent(context, MetronomeService::class.java).apply {
                     action = ACTION_START
@@ -339,6 +372,7 @@ class MetronomeService : Service(), AudioManager.OnAudioFocusChangeListener {
         }
 
         fun configure(context: Context, config: MetronomeConfig) {
+            // 配置更新通过普通 startService 发送 action，服务端只更新引擎配置。
             val intent =
                 Intent(context, MetronomeService::class.java).apply {
                     action = ACTION_CONFIGURE

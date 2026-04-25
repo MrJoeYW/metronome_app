@@ -2,11 +2,27 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/physics.dart';
 import 'package:flutter/services.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:webview_flutter/webview_flutter.dart';
 
+import 'metronome_database.dart';
+
+class AppPalette {
+  static const background = Color(0xFF101418);
+  static const surface = Color(0xFF1E252D);
+  static const surfaceVariant = Color(0xFF252D36);
+  static const primary = Color(0xFF4DA3FF);
+  static const secondary = Color(0xFFFFB84D);
+  static const textPrimary = Color(0xFFF4F6F8);
+  static const textSecondary = Color(0xFF9AA4AF);
+  static const border = Color(0xFF2D3742);
+  static const danger = Color(0xFFFF5C5C);
+}
+
+/// App 启动入口：先锁定沉浸式系统 UI，再进入 Flutter 页面树。
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await _applyImmersiveMode();
@@ -36,39 +52,47 @@ class MyApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       title: 'Pulse Grid',
       theme: base.copyWith(
-        scaffoldBackgroundColor: const Color(0xFF07111D),
+        scaffoldBackgroundColor: AppPalette.background,
         colorScheme: const ColorScheme.dark(
-          primary: Color(0xFF19F0C1),
-          secondary: Color(0xFF5ED7FF),
-          surface: Color(0xFF0F1C2B),
+          primary: AppPalette.primary,
+          secondary: AppPalette.secondary,
+          surface: AppPalette.surface,
+          surfaceContainerHighest: AppPalette.surfaceVariant,
+          error: AppPalette.danger,
+          onPrimary: AppPalette.background,
+          onSurface: AppPalette.textPrimary,
         ),
         textTheme: base.textTheme.apply(
-          bodyColor: Colors.white,
-          displayColor: Colors.white,
+          bodyColor: AppPalette.textPrimary,
+          displayColor: AppPalette.textPrimary,
         ),
       ),
-      home: const MetronomeHomePage(),
+      home: const MetronomeMainPage(),
     );
   }
 }
 
-class MetronomeHomePage extends StatefulWidget {
-  const MetronomeHomePage({super.key});
+/// 顶层页面容器。
+///
+/// 第二轮重构后，播放状态集中在这里管理：
+/// - 底部导航三页共用同一套 Start/Stop 状态。
+/// - 首页按钮、WebView 悬浮按钮、倒计时结束都会调用同一条播放路径。
+/// - Flutter 配置通过 [MetronomeBridge] 同步给 Android 原生节拍引擎。
+class MetronomeMainPage extends StatefulWidget {
+  const MetronomeMainPage({super.key});
 
   @override
-  State<MetronomeHomePage> createState() => _MetronomeHomePageState();
+  State<MetronomeMainPage> createState() => _MetronomeMainPageState();
 }
 
-class _MetronomeHomePageState extends State<MetronomeHomePage>
+class _MetronomeMainPageState extends State<MetronomeMainPage>
     with SingleTickerProviderStateMixin, WidgetsBindingObserver {
-  static const String _practiceDayKey = 'practice_day_key';
-  static const String _practiceAccumulatedMsKey = 'practice_accumulated_ms';
-  static const String _practiceSessionStartMsKey = 'practice_session_start_ms';
   static const Duration _tapTempoTimeout = Duration(seconds: 2);
   static const int _tapTempoWindowSize = 6;
   static const double _tapTempoOutlierTolerance = 0.30;
 
   final MetronomeBridge _bridge = const MetronomeBridge();
+  final MetronomeDatabase _database = MetronomeDatabase.instance;
   final TapTempoTracker _tapTempoTracker = TapTempoTracker(
     windowSize: _tapTempoWindowSize,
     timeout: _tapTempoTimeout,
@@ -76,32 +100,65 @@ class _MetronomeHomePageState extends State<MetronomeHomePage>
   );
   late final AnimationController _pulseController;
   StreamSubscription<BeatEvent>? _beatSubscription;
-  SharedPreferences? _preferences;
   Timer? _practiceTicker;
+  Timer? _settingsSaveDebounce;
+  Timer? _countdownTicker;
 
+  // BottomNavigation 的当前页：0 吉他社 WebView、1 节拍器、2 设置。
+  int _selectedTab = 1;
+
+  // 核心节拍配置。这些字段会组合成 MetronomeConfig 下发给 Android。
   int _bpm = 120;
   TimeSignature _signature = kTimeSignatures[3];
+  List<BeatType> _beatPattern = _defaultBeatPattern(
+    kTimeSignatures[3].beatsPerBar,
+  );
   SoundProfile _accentSound = SoundProfile.accent;
   SoundProfile _regularSound = SoundProfile.wood;
   VoiceMode _voiceMode = VoiceMode.off;
+  SubdivisionType _subdivision = SubdivisionType.quarter;
+
+  // 倒计时配置。_timerDuration 是用户设置值，_timerRemaining 是运行中剩余值。
+  bool _timerEnabled = false;
+  Duration _timerDuration = Duration.zero;
+  Duration _timerRemaining = Duration.zero;
+
+  // 运行态与原生引擎状态。所有播放入口都只改这里，避免多页面状态漂移。
   bool _accentHaptics = true;
   bool _isPlaying = false;
   bool _nativeEngineAvailable = true;
   bool _isTransportBusy = false;
+  bool _isFlushingPracticeSession = false;
   int _activeBeat = 0;
   int _cycleCount = 0;
   String _statusCopy = 'Native SoundPool engine ready';
   Duration _storedPracticeDuration = Duration.zero;
   DateTime? _practiceSessionStart;
+  List<PracticeLog> _practiceLogs = const [];
+  List<SavedMetronomePreset> _savedPresets = const [];
 
+  /// 当前 Flutter 配置快照，所有 MethodChannel start/configure 都使用它。
   MetronomeConfig get _config => MetronomeConfig(
     bpm: _bpm,
     beatsPerBar: _signature.beatsPerBar,
+    noteValue: _signature.noteValue,
     timeSignature: _signature.label,
     accentSound: _accentSound.token,
     regularSound: _regularSound.token,
     vocalMode: _voiceMode.token,
     accentHaptics: _accentHaptics,
+    subdivisionType: _subdivision.id,
+    beatTypes: _beatPattern.map((type) => type.token).toList(),
+  );
+
+  /// 轻量“上次设置”快照，用于 App 下次打开时恢复常用配置。
+  PersistedSettings get _settingsSnapshot => PersistedSettings(
+    lastBpm: _bpm,
+    timeSignature: _signature.label,
+    accentSoundId: _accentSound.token,
+    normalSoundId: _regularSound.token,
+    vocalMode: _voiceMode.token,
+    subdivisionType: _subdivision.id,
   );
 
   Duration get _todayPracticeDuration {
@@ -140,110 +197,96 @@ class _MetronomeHomePageState extends State<MetronomeHomePage>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       unawaited(_applyImmersiveMode());
-      unawaited(_restorePracticeState(isPlaying: _isPlaying));
+      unawaited(_refreshPracticeSummary());
+      if (_isPlaying && _practiceSessionStart == null) {
+        unawaited(_startPracticeSession());
+      }
+      return;
+    }
+
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.detached) {
+      unawaited(_flushPracticeSession(continueIfPlaying: _isPlaying));
+      unawaited(_saveSettingsNow());
     }
   }
 
   Future<void> _bootstrap() async {
-    final preferences = await SharedPreferences.getInstance();
+    final settings = await _database.loadSettings();
     final status = await _bridge.fetchStatus();
     if (!mounted) {
       return;
     }
 
-    _preferences = preferences;
+    setState(() {
+      if (status?.isRunning == true) {
+        _applyConfig(status!.config);
+      } else if (settings != null) {
+        _applyPersistedSettings(settings);
+      }
 
-    if (status != null) {
-      setState(() {
-        _bpm = status.config.bpm;
-        _signature = _signatureFromLabel(
-          status.config.timeSignature,
-          status.config.beatsPerBar,
-        );
-        _accentSound = SoundProfile.fromToken(status.config.accentSound);
-        _regularSound = SoundProfile.fromToken(status.config.regularSound);
-        _voiceMode = VoiceMode.fromToken(status.config.vocalMode);
-        _accentHaptics = status.config.accentHaptics;
+      if (status != null) {
         _isPlaying = status.isRunning;
         _activeBeat = status.currentBeat;
         _cycleCount = status.cycleCount;
         _statusCopy = status.isRunning
             ? 'Foreground service is running'
             : 'Native SoundPool engine ready';
-      });
-    } else {
-      setState(() {
+      } else {
         _nativeEngineAvailable = false;
         _statusCopy = 'Android native metronome service is unavailable';
-      });
-    }
+      }
+    });
 
-    await _restorePracticeState(isPlaying: status?.isRunning ?? false);
+    await _refreshPracticeSummary();
+    if (status?.isRunning == true) {
+      await _startPracticeSession();
+    }
+    unawaited(_saveSettingsNow());
     await _syncConfiguration();
   }
 
-  Future<void> _restorePracticeState({required bool isPlaying}) async {
-    final preferences = _preferences;
-    if (preferences == null) {
-      return;
-    }
+  void _applyConfig(MetronomeConfig config) {
+    _bpm = config.bpm;
+    _signature = _signatureFromLabel(
+      config.timeSignature,
+      config.beatsPerBar,
+      noteValue: config.noteValue,
+    );
+    _beatPattern = _beatPatternFromTokens(
+      config.beatTypes,
+      _signature.beatsPerBar,
+    );
+    _accentSound = SoundProfile.fromToken(config.accentSound);
+    _regularSound = SoundProfile.fromToken(config.regularSound);
+    _voiceMode = VoiceMode.fromToken(config.vocalMode);
+    _accentHaptics = config.accentHaptics;
+    _subdivision = SubdivisionType.fromId(config.subdivisionType);
+  }
 
-    final now = DateTime.now();
-    final todayKey = _dayKey(now);
-    final storedDay = preferences.getString(_practiceDayKey);
-    var accumulatedMs = preferences.getInt(_practiceAccumulatedMsKey) ?? 0;
-    DateTime? sessionStart;
-    final storedSessionMs = preferences.getInt(_practiceSessionStartMsKey);
+  void _applyPersistedSettings(PersistedSettings settings) {
+    _bpm = settings.lastBpm.clamp(kMinBpm, kMaxBpm).toInt();
+    _signature = _signatureFromLabel(settings.timeSignature, 4);
+    _beatPattern = _resizeBeatPattern(_beatPattern, _signature.beatsPerBar);
+    _accentSound = SoundProfile.fromToken(settings.accentSoundId);
+    _regularSound = SoundProfile.fromToken(settings.normalSoundId);
+    _voiceMode = VoiceMode.fromToken(settings.vocalMode);
+    _subdivision = SubdivisionType.fromId(settings.subdivisionType);
+  }
 
-    if (storedDay == todayKey && storedSessionMs != null) {
-      sessionStart = DateTime.fromMillisecondsSinceEpoch(storedSessionMs);
-    }
-
-    if (storedDay != todayKey) {
-      accumulatedMs = 0;
-      sessionStart = isPlaying ? now : null;
-    } else if (isPlaying && sessionStart == null) {
-      sessionStart = now;
-    } else if (!isPlaying && sessionStart != null) {
-      accumulatedMs += now.difference(sessionStart).inMilliseconds;
-      sessionStart = null;
-    }
-
+  Future<void> _refreshPracticeSummary() async {
+    final today = await _database.todayTotal(DateTime.now());
+    final logs = await _database.recentPracticeLogs();
+    final presets = await _database.loadSavedPresets();
     if (!mounted) {
       return;
     }
-
     setState(() {
-      _storedPracticeDuration = Duration(milliseconds: accumulatedMs);
-      _practiceSessionStart = sessionStart;
+      _storedPracticeDuration = today;
+      _practiceLogs = logs;
+      _savedPresets = presets;
     });
-
-    _refreshPracticeTicker();
-    await _persistPracticeState();
-  }
-
-  Future<void> _persistPracticeState() async {
-    final preferences = _preferences;
-    if (preferences == null) {
-      return;
-    }
-
-    await preferences.setString(_practiceDayKey, _dayKey(DateTime.now()));
-    await preferences.setInt(
-      _practiceAccumulatedMsKey,
-      _storedPracticeDuration.inMilliseconds,
-    );
-
-    final sessionStart = _practiceSessionStart;
-    if (sessionStart == null) {
-      await preferences.remove(_practiceSessionStartMsKey);
-      return;
-    }
-
-    await preferences.setInt(
-      _practiceSessionStartMsKey,
-      sessionStart.millisecondsSinceEpoch,
-    );
   }
 
   void _refreshPracticeTicker() {
@@ -269,31 +312,78 @@ class _MetronomeHomePageState extends State<MetronomeHomePage>
       _practiceSessionStart = DateTime.now();
     });
     _refreshPracticeTicker();
-    await _persistPracticeState();
   }
 
   Future<void> _stopPracticeSession() async {
+    await _flushPracticeSession(continueIfPlaying: false);
+  }
+
+  Future<void> _flushPracticeSession({required bool continueIfPlaying}) async {
+    if (_isFlushingPracticeSession) {
+      return;
+    }
+
     final sessionStart = _practiceSessionStart;
     if (sessionStart == null) {
       _practiceTicker?.cancel();
       return;
     }
 
-    setState(() {
-      _storedPracticeDuration += DateTime.now().difference(sessionStart);
-      _practiceSessionStart = null;
-    });
-    _practiceTicker?.cancel();
-    await _persistPracticeState();
+    _isFlushingPracticeSession = true;
+    final now = DateTime.now();
+    final elapsed = now.difference(sessionStart);
+    final durationSeconds = elapsed.inSeconds;
+
+    if (mounted) {
+      setState(() {
+        _practiceSessionStart = continueIfPlaying ? now : null;
+      });
+    } else {
+      _practiceSessionStart = continueIfPlaying ? now : null;
+    }
+
+    if (continueIfPlaying) {
+      _refreshPracticeTicker();
+    } else {
+      _practiceTicker?.cancel();
+    }
+
+    try {
+      await _database.addPracticeLog(
+        date: now,
+        durationSeconds: durationSeconds,
+        averageBpm: _bpm,
+      );
+      await _refreshPracticeSummary();
+    } finally {
+      _isFlushingPracticeSession = false;
+    }
   }
 
-  TimeSignature _signatureFromLabel(String label, int beatsPerBar) {
+  TimeSignature _signatureFromLabel(
+    String label,
+    int beatsPerBar, {
+    int? noteValue,
+  }) {
+    final parsed = _parseSignatureLabel(label);
     for (final signature in kTimeSignatures) {
-      if (signature.label == label || signature.beatsPerBar == beatsPerBar) {
+      if (signature.label == label) {
         return signature;
       }
     }
-    return kTimeSignatures[3];
+    if (parsed == null) {
+      for (final signature in kTimeSignatures) {
+        if (signature.beatsPerBar == beatsPerBar) {
+          return signature;
+        }
+      }
+    }
+    return TimeSignature(
+      label: parsed?.label ?? '$beatsPerBar/${noteValue ?? 4}',
+      beatsPerBar: (parsed?.beatsPerBar ?? beatsPerBar).clamp(1, 16).toInt(),
+      noteValue: (parsed?.noteValue ?? noteValue ?? 4).clamp(1, 32).toInt(),
+      caption: 'Custom meter',
+    );
   }
 
   void _handleBeat(BeatEvent event) {
@@ -320,12 +410,36 @@ class _MetronomeHomePageState extends State<MetronomeHomePage>
     });
   }
 
+  // 设置保存做 1 秒防抖，避免拖动 BPM 或连续点拍型时频繁写库。
+  void _scheduleSettingsSave() {
+    _settingsSaveDebounce?.cancel();
+    _settingsSaveDebounce = Timer(const Duration(seconds: 1), () {
+      unawaited(_saveSettingsNow());
+    });
+  }
+
+  Future<void> _saveSettingsNow() async {
+    _settingsSaveDebounce?.cancel();
+    await _database.saveSettings(_settingsSnapshot);
+  }
+
+  /// 全局播放开关：所有 UI 入口和定时器自动停止都走这里。
   Future<void> _togglePlayback() async {
+    await _setPlayback(!_isPlaying);
+  }
+
+  /// 实际 Start/Stop 执行函数。
+  ///
+  /// shouldStart=true 时启动 Android 前台服务；false 时停止服务并结算练习记录。
+  Future<void> _setPlayback(bool shouldStart) async {
     if (_isTransportBusy) {
       return;
     }
+    if (shouldStart == _isPlaying) {
+      return;
+    }
 
-    final shouldStart = !_isPlaying;
+    HapticFeedback.mediumImpact();
     setState(() {
       _isTransportBusy = true;
       _statusCopy = shouldStart
@@ -382,6 +496,7 @@ class _MetronomeHomePageState extends State<MetronomeHomePage>
         _tapTempoTracker.reset();
       }
     });
+    _scheduleSettingsSave();
     await _syncConfiguration();
   }
 
@@ -401,9 +516,72 @@ class _MetronomeHomePageState extends State<MetronomeHomePage>
     }
     setState(() {
       _signature = signature;
+      _beatPattern = _resizeBeatPattern(_beatPattern, signature.beatsPerBar);
       _activeBeat = 0;
     });
+    HapticFeedback.selectionClick();
+    _scheduleSettingsSave();
     await _syncConfiguration();
+  }
+
+  /// 单拍轻重类型循环：Light -> Secondary -> Accent -> Rest -> Light。
+  /// 改动后立刻同步给原生层，Rest 才能在播放中即时静音。
+  void _cycleBeatType(int index) {
+    if (index < 0 || index >= _beatPattern.length) {
+      return;
+    }
+    setState(() {
+      _beatPattern = List<BeatType>.of(_beatPattern);
+      _beatPattern[index] = _beatPattern[index].next;
+    });
+    HapticFeedback.selectionClick();
+    _scheduleSettingsSave();
+    unawaited(_syncConfiguration());
+  }
+
+  /// 长按单拍的预留编辑面板。当前只展示类型和细分占位，后续可扩展单拍细分。
+  Future<void> _openBeatEditSheet(int index) async {
+    if (index < 0 || index >= _beatPattern.length) {
+      return;
+    }
+
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      barrierColor: Colors.black.withValues(alpha: 0.58),
+      builder: (context) {
+        final type = _beatPattern[index];
+        return _FunctionSheetFrame(
+          title: 'Beat ${index + 1}',
+          scrollController: ScrollController(),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _PreviewPanel(
+                icon: Icons.tune_rounded,
+                title: 'Current type',
+                value: type.label,
+                accent: type.color,
+              ),
+              const SizedBox(height: 16),
+              _PreviewPanel(
+                icon: Icons.graphic_eq_rounded,
+                title: 'Subdivision',
+                value: 'Reserved',
+                subtitle: 'Per-beat controls are coming',
+                accent: AppPalette.primary,
+              ),
+              const SizedBox(height: 18),
+              _SheetActionButton(
+                label: 'Confirm',
+                icon: Icons.check_rounded,
+                onPressed: () => Navigator.of(context).pop(),
+              ),
+            ],
+          ),
+        );
+      },
+    );
   }
 
   Future<void> _updateAccentSound(SoundProfile sound) async {
@@ -413,6 +591,8 @@ class _MetronomeHomePageState extends State<MetronomeHomePage>
     setState(() {
       _accentSound = sound;
     });
+    HapticFeedback.selectionClick();
+    _scheduleSettingsSave();
     await _syncConfiguration();
   }
 
@@ -423,6 +603,8 @@ class _MetronomeHomePageState extends State<MetronomeHomePage>
     setState(() {
       _regularSound = sound;
     });
+    HapticFeedback.selectionClick();
+    _scheduleSettingsSave();
     await _syncConfiguration();
   }
 
@@ -433,6 +615,8 @@ class _MetronomeHomePageState extends State<MetronomeHomePage>
     setState(() {
       _voiceMode = mode;
     });
+    HapticFeedback.selectionClick();
+    _scheduleSettingsSave();
     await _syncConfiguration();
   }
 
@@ -440,24 +624,188 @@ class _MetronomeHomePageState extends State<MetronomeHomePage>
     setState(() {
       _accentHaptics = enabled;
     });
+    HapticFeedback.selectionClick();
+    _scheduleSettingsSave();
     await _syncConfiguration();
   }
 
-  Future<void> _openSettingsSheet() async {
+  void _setTimer({required bool enabled, required Duration duration}) {
+    setState(() {
+      _timerEnabled = enabled;
+      _timerDuration = enabled ? duration : Duration.zero;
+      _timerRemaining = enabled ? duration : Duration.zero;
+    });
+    HapticFeedback.selectionClick();
+    _scheduleSettingsSave();
+    if (enabled) {
+      _startCountdown();
+    } else {
+      _stopCountdown(clearRemaining: true);
+    }
+  }
+
+  /// Apply 后启动 UI 倒计时；归零时通过全局播放路径停止节拍器。
+  void _startCountdown() {
+    _countdownTicker?.cancel();
+    if (!_timerEnabled || _timerRemaining <= Duration.zero) {
+      return;
+    }
+
+    _countdownTicker = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) {
+        return;
+      }
+      final next = _timerRemaining - const Duration(seconds: 1);
+      if (next <= Duration.zero) {
+        _stopCountdown(clearRemaining: true);
+        if (_isPlaying) {
+          unawaited(_setPlayback(false));
+        }
+        return;
+      }
+      setState(() {
+        _timerRemaining = next;
+      });
+    });
+  }
+
+  void _stopCountdown({required bool clearRemaining}) {
+    _countdownTicker?.cancel();
+    _countdownTicker = null;
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _timerEnabled = clearRemaining ? false : _timerEnabled;
+      _timerRemaining = clearRemaining ? Duration.zero : _timerRemaining;
+    });
+  }
+
+  Future<void> _refreshSavedPresets() async {
+    final presets = await _database.loadSavedPresets();
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _savedPresets = presets;
+    });
+  }
+
+  Future<void> _saveCurrentPreset(String name) async {
+    final trimmedName = name.trim();
+    if (trimmedName.isEmpty) {
+      return;
+    }
+
+    await _database.savePreset(
+      SavedMetronomePreset(
+        id: null,
+        name: trimmedName,
+        bpm: _bpm,
+        timeSignature: _signature.label,
+        beatsPerBar: _signature.beatsPerBar,
+        noteValue: _signature.noteValue,
+        beatPattern: _beatPattern.map((type) => type.token).toList(),
+        subdivisionType: _subdivision.id,
+        timerEnabled: _timerEnabled,
+        timerSeconds: _timerRemaining.inSeconds > 0
+            ? _timerRemaining.inSeconds
+            : _timerDuration.inSeconds,
+        accentSoundId: _accentSound.token,
+        normalSoundId: _regularSound.token,
+        vocalMode: _voiceMode.token,
+      ),
+    );
+    await _refreshSavedPresets();
+  }
+
+  /// 从设置页恢复已保存配置，并立即同步给 Android 引擎。
+  Future<void> _restorePreset(SavedMetronomePreset preset) async {
+    final nextSignature = TimeSignature(
+      label: preset.timeSignature,
+      beatsPerBar: preset.beatsPerBar,
+      noteValue: preset.noteValue,
+      caption: 'Saved meter',
+    );
+    final nextDuration = Duration(seconds: preset.timerSeconds);
+
+    setState(() {
+      _bpm = preset.bpm.clamp(kMinBpm, kMaxBpm).toInt();
+      _signature = nextSignature;
+      _beatPattern = _beatPatternFromTokens(
+        preset.beatPattern,
+        nextSignature.beatsPerBar,
+      );
+      _subdivision = SubdivisionType.fromId(preset.subdivisionType);
+      _timerEnabled = preset.timerEnabled && nextDuration > Duration.zero;
+      _timerDuration = _timerEnabled ? nextDuration : Duration.zero;
+      _timerRemaining = _timerDuration;
+      _accentSound = SoundProfile.fromToken(preset.accentSoundId);
+      _regularSound = SoundProfile.fromToken(preset.normalSoundId);
+      _voiceMode = VoiceMode.fromToken(preset.vocalMode);
+      _selectedTab = 1;
+    });
+
+    if (_timerEnabled) {
+      _startCountdown();
+    } else {
+      _countdownTicker?.cancel();
+      _countdownTicker = null;
+    }
+    _scheduleSettingsSave();
+    await _syncConfiguration();
+  }
+
+  Future<void> _deletePreset(SavedMetronomePreset preset) async {
+    final id = preset.id;
+    if (id == null) {
+      return;
+    }
+    await _database.deletePreset(id);
+    await _refreshSavedPresets();
+  }
+
+  Future<void> _openFunctionSheet(_FunctionSheet sheet) async {
     await showModalBottomSheet<void>(
       context: context,
+      isScrollControlled: true,
       backgroundColor: Colors.transparent,
       barrierColor: Colors.black.withValues(alpha: 0.62),
       builder: (context) {
-        return MetronomeSettingsSheet(
-          accentSound: _accentSound,
-          regularSound: _regularSound,
-          voiceMode: _voiceMode,
-          accentHaptics: _accentHaptics,
-          onAccentSoundChanged: _updateAccentSound,
-          onRegularSoundChanged: _updateRegularSound,
-          onVoiceModeChanged: _updateVoiceMode,
-          onAccentHapticsChanged: _toggleAccentHaptics,
+        return DraggableScrollableSheet(
+          initialChildSize: 0.70,
+          minChildSize: 0.36,
+          maxChildSize: 0.90,
+          expand: false,
+          builder: (context, scrollController) {
+            return switch (sheet) {
+              _FunctionSheet.signature => TimeSignatureSheet(
+                initialSignature: _signature,
+                scrollController: scrollController,
+                onConfirmed: _updateSignature,
+              ),
+              _FunctionSheet.sound => SoundPresetSheet(
+                accentSound: _accentSound,
+                regularSound: _regularSound,
+                voiceMode: _voiceMode,
+                accentHaptics: _accentHaptics,
+                scrollController: scrollController,
+                onAccentSoundChanged: _updateAccentSound,
+                onRegularSoundChanged: _updateRegularSound,
+                onVoiceModeChanged: _updateVoiceMode,
+                onAccentHapticsChanged: _toggleAccentHaptics,
+              ),
+              _FunctionSheet.tuner => TunerSheet(
+                scrollController: scrollController,
+              ),
+              _FunctionSheet.timer => TimerSheet(
+                enabled: _timerEnabled,
+                duration: _timerEnabled ? _timerRemaining : _timerDuration,
+                scrollController: scrollController,
+                onChanged: _setTimer,
+              ),
+            };
+          },
         );
       },
     );
@@ -468,151 +816,152 @@ class _MetronomeHomePageState extends State<MetronomeHomePage>
     WidgetsBinding.instance.removeObserver(this);
     _beatSubscription?.cancel();
     _practiceTicker?.cancel();
+    _countdownTicker?.cancel();
+    unawaited(_flushPracticeSession(continueIfPlaying: _isPlaying));
+    unawaited(_saveSettingsNow());
     _pulseController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: const SystemUiOverlayStyle(
         statusBarColor: Colors.transparent,
-        systemNavigationBarColor: Colors.transparent,
+        systemNavigationBarColor: AppPalette.background,
+        statusBarIconBrightness: Brightness.light,
+        systemNavigationBarIconBrightness: Brightness.light,
       ),
       child: Scaffold(
-        body: LayoutBuilder(
-          builder: (context, constraints) {
-            final compact = constraints.maxHeight < 760;
-            final horizontalPadding = compact ? 16.0 : 20.0;
-            final pulse =
-                1 - Curves.easeOutCubic.transform(_pulseController.value);
+        bottomNavigationBar: BottomNavigation(
+          selectedIndex: _selectedTab,
+          onDestinationSelected: (index) {
+            setState(() {
+              _selectedTab = index;
+            });
+          },
+        ),
+        body: switch (_selectedTab) {
+          0 => GuitarSocietyPage(
+            isPlaying: _isPlaying,
+            isBusy: _isTransportBusy,
+            onTogglePlayback: _togglePlayback,
+          ),
+          2 => SettingsPage(
+            presets: _savedPresets,
+            onSavePreset: _saveCurrentPreset,
+            onRestorePreset: _restorePreset,
+            onDeletePreset: _deletePreset,
+          ),
+          _ => LayoutBuilder(
+            builder: (context, constraints) {
+              final compact = constraints.maxHeight < 740;
+              final horizontalPadding = compact ? 16.0 : 20.0;
+              final pulse =
+                  1 - Curves.easeOutCubic.transform(_pulseController.value);
+              final dialSize = math.min(
+                constraints.maxWidth - (horizontalPadding * 2),
+                compact ? 258.0 : 334.0,
+              );
 
-            return DecoratedBox(
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [
-                    Color(0xFF030811),
-                    Color(0xFF0A1424),
-                    Color(0xFF11263B),
-                  ],
-                ),
-              ),
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  Positioned(
-                    top: -110,
-                    right: -40,
-                    child: _GlowBlob(
-                      color: const Color(0xFF19F0C1).withValues(alpha: 0.12),
-                      size: 250,
+              return ColoredBox(
+                color: AppPalette.background,
+                child: SafeArea(
+                  bottom: true,
+                  child: SingleChildScrollView(
+                    physics: compact
+                        ? const BouncingScrollPhysics()
+                        : const NeverScrollableScrollPhysics(),
+                    padding: EdgeInsets.fromLTRB(
+                      horizontalPadding,
+                      12,
+                      horizontalPadding,
+                      compact ? 22 : 28,
                     ),
-                  ),
-                  Positioned(
-                    bottom: 36,
-                    left: -60,
-                    child: _GlowBlob(
-                      color: const Color(0xFF5ED7FF).withValues(alpha: 0.10),
-                      size: 230,
-                    ),
-                  ),
-                  SafeArea(
-                    child: Padding(
-                      padding: EdgeInsets.fromLTRB(
-                        horizontalPadding,
-                        10,
-                        horizontalPadding,
-                        compact ? 14 : 18,
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(
+                        minHeight:
+                            constraints.maxHeight -
+                            MediaQuery.paddingOf(context).vertical -
+                            (compact ? 26 : 30),
                       ),
                       child: Column(
                         children: [
-                          Row(
-                            children: [
-                              _GlassIconButton(
-                                icon: Icons.tune_rounded,
-                                tooltip: 'Open settings',
-                                onTap: _openSettingsSheet,
-                              ),
-                              const Spacer(),
-                              DailyPracticeTimer(
-                                duration: _todayPracticeDuration,
-                              ),
-                            ],
+                          TopFunctionBar(
+                            signatureLabel: _signature.label,
+                            soundLabel: _regularSound.label,
+                            timerLabel: _timerEnabled
+                                ? _formatTimerDuration(_timerRemaining)
+                                : null,
+                            onSignatureTap: () =>
+                                _openFunctionSheet(_FunctionSheet.signature),
+                            onSoundTap: () =>
+                                _openFunctionSheet(_FunctionSheet.sound),
+                            onTunerTap: () =>
+                                _openFunctionSheet(_FunctionSheet.tuner),
+                            onTimerTap: () =>
+                                _openFunctionSheet(_FunctionSheet.timer),
                           ),
-                          SizedBox(height: compact ? 12 : 18),
-                          SizedBox(
-                            height: compact ? 48 : 56,
-                            child: BeatIndicatorStrip(
-                              beatsPerBar: _signature.beatsPerBar,
-                              activeBeat: _activeBeat,
-                              isPlaying: _isPlaying,
-                              pulseAmount: pulse,
-                            ),
-                          ),
-                          SizedBox(height: compact ? 8 : 12),
-                          Expanded(
-                            child: Center(
-                              child: BpmDial(
-                                bpm: _bpm,
-                                min: kMinBpm,
-                                max: kMaxBpm,
-                                pulseAmount: pulse,
-                                size: math.min(
-                                  constraints.maxWidth -
-                                      (horizontalPadding * 2),
-                                  compact ? 300 : 348,
-                                ),
-                                onChanged: (value) => _updateBpm(
-                                  value,
-                                  resetTapTempoBuffer: true,
-                                ),
-                                onTapTempo: () => unawaited(_handleTapTempo()),
-                              ),
-                            ),
-                          ),
-                          SizedBox(height: compact ? 10 : 14),
-                          TimeSignatureSelector(
-                            selected: _signature,
-                            onSelected: _updateSignature,
+                          SizedBox(height: compact ? 14 : 18),
+                          BeatPatternBar(
+                            beatPattern: _beatPattern,
+                            activeBeat: _activeBeat,
+                            isPlaying: _isPlaying,
+                            onBeatTap: _cycleBeatType,
+                            onBeatLongPress: _openBeatEditSheet,
                           ),
                           SizedBox(height: compact ? 12 : 16),
-                          _TransportPanel(
+                          BpmDial(
+                            bpm: _bpm,
+                            min: kMinBpm,
+                            max: kMaxBpm,
+                            pulseAmount: pulse,
+                            size: dialSize,
+                            onChanged: (value) =>
+                                _updateBpm(value, resetTapTempoBuffer: true),
+                            onTapTempo: () => unawaited(_handleTapTempo()),
+                          ),
+                          SizedBox(height: compact ? 12 : 16),
+                          TransportPanel(
                             isPlaying: _isPlaying,
                             isBusy: _isTransportBusy,
-                            statusCopy: _statusCopy,
-                            activeBeat: _activeBeat,
-                            bars: _cycleCount,
-                            beatsPerBar: _signature.beatsPerBar,
-                            hasNativeEngine: _nativeEngineAvailable,
                             compact: compact,
                             onTogglePlayback: _togglePlayback,
+                          ),
+                          SizedBox(height: compact ? 10 : 12),
+                          PracticeStatsPanel(
+                            todayPracticeDuration: _todayPracticeDuration,
+                            bars: _cycleCount,
+                            hasNativeEngine: _nativeEngineAvailable,
+                            statusCopy: _statusCopy,
+                            practiceLogs: _practiceLogs,
                           ),
                           if (!_nativeEngineAvailable) ...[
                             SizedBox(height: compact ? 8 : 10),
                             Container(
                               width: double.infinity,
                               padding: const EdgeInsets.symmetric(
-                                horizontal: 16,
+                                horizontal: 14,
                                 vertical: 10,
                               ),
                               decoration: BoxDecoration(
-                                color: const Color(
-                                  0xFF241219,
-                                ).withValues(alpha: 0.92),
-                                borderRadius: BorderRadius.circular(18),
+                                color: AppPalette.danger.withValues(
+                                  alpha: 0.10,
+                                ),
+                                borderRadius: BorderRadius.circular(8),
                                 border: Border.all(
-                                  color: const Color(0xFF8F4155),
+                                  color: AppPalette.danger.withValues(
+                                    alpha: 0.36,
+                                  ),
                                 ),
                               ),
                               child: Text(
                                 'Preview mode only. Low-latency playback, WakeLock, and audio focus need a real Android device.',
-                                style: theme.textTheme.bodySmall?.copyWith(
-                                  color: Colors.white.withValues(alpha: 0.76),
-                                ),
+                                style: Theme.of(context).textTheme.bodySmall
+                                    ?.copyWith(
+                                      color: AppPalette.textPrimary,
+                                      fontWeight: FontWeight.w600,
+                                    ),
                               ),
                             ),
                           ],
@@ -620,114 +969,272 @@ class _MetronomeHomePageState extends State<MetronomeHomePage>
                       ),
                     ),
                   ),
-                ],
-              ),
-            );
-          },
-        ),
+                ),
+              );
+            },
+          ),
+        },
       ),
     );
   }
-
-  String _dayKey(DateTime value) {
-    final month = value.month.toString().padLeft(2, '0');
-    final day = value.day.toString().padLeft(2, '0');
-    return '${value.year}-$month-$day';
-  }
 }
 
-class DailyPracticeTimer extends StatelessWidget {
-  const DailyPracticeTimer({super.key, required this.duration});
+enum _FunctionSheet { signature, sound, tuner, timer }
 
-  final Duration duration;
+/// 首页顶部四个功能入口：拍号、音色、调音器、定时器。
+/// 每个入口只打开抽屉，不直接把复杂设置堆在首页。
+class TopFunctionBar extends StatelessWidget {
+  const TopFunctionBar({
+    super.key,
+    required this.signatureLabel,
+    required this.soundLabel,
+    required this.timerLabel,
+    required this.onSignatureTap,
+    required this.onSoundTap,
+    required this.onTunerTap,
+    required this.onTimerTap,
+  });
+
+  final String signatureLabel;
+  final String soundLabel;
+  final String? timerLabel;
+  final VoidCallback onSignatureTap;
+  final VoidCallback onSoundTap;
+  final VoidCallback onTunerTap;
+  final VoidCallback onTimerTap;
 
   @override
   Widget build(BuildContext context) {
-    final label = _formatDuration(duration);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.18),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          Text(
-            'TODAY',
-            style: Theme.of(context).textTheme.labelSmall?.copyWith(
-              color: Colors.white.withValues(alpha: 0.42),
-              letterSpacing: 1.6,
-              fontWeight: FontWeight.w600,
-            ),
+    return Row(
+      children: [
+        Expanded(
+          child: FunctionButton(
+            label: 'Meter',
+            value: signatureLabel,
+            icon: Icons.grid_4x4_rounded,
+            accent: AppPalette.secondary,
+            onTap: onSignatureTap,
           ),
-          const SizedBox(height: 2),
-          Text(
-            label,
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: Colors.white.withValues(alpha: 0.72),
-              fontFeatures: const [ui.FontFeature.tabularFigures()],
-              letterSpacing: 0.8,
-            ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: FunctionButton(
+            label: 'Tone',
+            value: soundLabel,
+            icon: Icons.graphic_eq_rounded,
+            accent: AppPalette.primary,
+            onTap: onSoundTap,
           ),
-        ],
-      ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: FunctionButton(
+            label: 'Tuner',
+            value: 'Dev',
+            icon: Icons.tune_rounded,
+            accent: const Color(0xFF7AD7A8),
+            onTap: onTunerTap,
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: FunctionButton(
+            label: 'Timer',
+            value: timerLabel ?? '--',
+            icon: Icons.timer_rounded,
+            accent: const Color(0xFFFF7A90),
+            onTap: onTimerTap,
+          ),
+        ),
+      ],
     );
-  }
-
-  String _formatDuration(Duration duration) {
-    final totalSeconds = duration.inSeconds;
-    final hours = (totalSeconds ~/ 3600).toString().padLeft(2, '0');
-    final minutes = ((totalSeconds % 3600) ~/ 60).toString().padLeft(2, '0');
-    final seconds = (totalSeconds % 60).toString().padLeft(2, '0');
-    return '$hours:$minutes:$seconds';
   }
 }
 
-class _GlassIconButton extends StatelessWidget {
-  const _GlassIconButton({
+/// 顶部功能按钮的通用外观，保持固定高度避免不同文字导致抖动。
+class FunctionButton extends StatelessWidget {
+  const FunctionButton({
+    super.key,
+    required this.label,
+    required this.value,
     required this.icon,
-    required this.tooltip,
+    required this.accent,
     required this.onTap,
   });
 
+  final String label;
+  final String value;
   final IconData icon;
-  final String tooltip;
+  final Color accent;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     return Tooltip(
-      message: tooltip,
+      message: label,
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(18),
-        child: Ink(
-          width: 42,
-          height: 42,
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          height: 64,
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
           decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.06),
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: Colors.white.withValues(alpha: 0.09)),
+            color: AppPalette.surface,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: AppPalette.border),
           ),
-          child: Icon(icon, color: Colors.white.withValues(alpha: 0.84)),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, size: 18, color: accent),
+              const SizedBox(height: 4),
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  value,
+                  maxLines: 1,
+                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                    color: AppPalette.textPrimary,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 }
 
+/// 首页轻重拍编辑条。
+///
+/// 每个 Cell 显示拍号数字，用高度和颜色表达 Accent/Secondary/Light/Rest。
+/// 点击循环类型，长按打开单拍编辑预留面板。
+class BeatPatternBar extends StatelessWidget {
+  const BeatPatternBar({
+    super.key,
+    required this.beatPattern,
+    required this.activeBeat,
+    required this.isPlaying,
+    required this.onBeatTap,
+    required this.onBeatLongPress,
+  });
+
+  final List<BeatType> beatPattern;
+  final int activeBeat;
+  final bool isPlaying;
+  final ValueChanged<int> onBeatTap;
+  final ValueChanged<int> onBeatLongPress;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 64,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          for (var index = 0; index < beatPattern.length; index++)
+            Expanded(
+              child: Padding(
+                padding: EdgeInsets.symmetric(
+                  horizontal: beatPattern.length > 12 ? 2 : 4,
+                ),
+                child: BeatPatternCell(
+                  index: index,
+                  type: beatPattern[index],
+                  isActive: isPlaying && activeBeat == index,
+                  onTap: () => onBeatTap(index),
+                  onLongPress: () => onBeatLongPress(index),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 单个拍子的可点击柱状单元。
+class BeatPatternCell extends StatelessWidget {
+  const BeatPatternCell({
+    super.key,
+    required this.index,
+    required this.type,
+    required this.isActive,
+    required this.onTap,
+    required this.onLongPress,
+  });
+
+  final int index;
+  final BeatType type;
+  final bool isActive;
+  final VoidCallback onTap;
+  final VoidCallback onLongPress;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: '${index + 1}: ${type.label}',
+      child: InkWell(
+        onTap: onTap,
+        onLongPress: onLongPress,
+        borderRadius: BorderRadius.circular(8),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          height: type.barHeight,
+          constraints: const BoxConstraints(minHeight: 18),
+          decoration: BoxDecoration(
+            color: type.color.withValues(
+              alpha: type == BeatType.rest ? 0.28 : 0.92,
+            ),
+            borderRadius: BorderRadius.circular(7),
+            border: Border.all(
+              color: isActive ? AppPalette.textPrimary : type.color,
+              width: isActive ? 2 : 1,
+            ),
+            boxShadow: isActive
+                ? [
+                    BoxShadow(
+                      color: type.color.withValues(alpha: 0.26),
+                      blurRadius: 12,
+                      offset: const Offset(0, 5),
+                    ),
+                  ]
+                : null,
+          ),
+          child: Center(
+            child: Text(
+              '${index + 1}',
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                color: type == BeatType.rest
+                    ? AppPalette.textSecondary
+                    : AppPalette.background,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 0,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 仅用于播放时的微型节拍灯组件。
+/// 第二轮首页已移除上方进度灯，此组件暂留给后续可能的小型状态展示。
 class BeatIndicatorStrip extends StatelessWidget {
   const BeatIndicatorStrip({
     super.key,
     required this.beatsPerBar,
+    required this.beatPattern,
     required this.activeBeat,
     required this.isPlaying,
     required this.pulseAmount,
   });
 
   final int beatsPerBar;
+  final List<BeatType> beatPattern;
   final int activeBeat;
   final bool isPlaying;
   final double pulseAmount;
@@ -741,7 +1248,9 @@ class BeatIndicatorStrip extends StatelessWidget {
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 5),
               child: _BeatNode(
-                isAccent: index == 0,
+                type: index < beatPattern.length
+                    ? beatPattern[index]
+                    : BeatType.light,
                 isActive: isPlaying && index == activeBeat,
                 pulseAmount: pulseAmount,
               ),
@@ -754,22 +1263,20 @@ class BeatIndicatorStrip extends StatelessWidget {
 
 class _BeatNode extends StatelessWidget {
   const _BeatNode({
-    required this.isAccent,
+    required this.type,
     required this.isActive,
     required this.pulseAmount,
   });
 
-  final bool isAccent;
+  final BeatType type;
   final bool isActive;
   final double pulseAmount;
 
   @override
   Widget build(BuildContext context) {
-    final baseColor = isAccent
-        ? const Color(0xFF19F0C1)
-        : const Color(0xFF5ED7FF);
-    final activeAlpha = isActive ? (0.90 + (pulseAmount * 0.10)) : 0.18;
-    final scale = isActive ? 0.98 + (pulseAmount * 0.18) : 0.82;
+    final baseColor = type.color;
+    final activeAlpha = isActive ? (0.86 + (pulseAmount * 0.10)) : 0.22;
+    final scale = isActive ? 0.98 + (pulseAmount * 0.10) : 0.82;
 
     return SizedBox.expand(
       child: Center(
@@ -778,21 +1285,15 @@ class _BeatNode extends StatelessWidget {
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 140),
             curve: Curves.easeOut,
-            width: isAccent ? 28 : 20,
-            height: 20,
+            width: type == BeatType.accent ? 28 : 20,
+            height: 14,
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(999),
               color: baseColor.withValues(alpha: activeAlpha),
-              boxShadow: isActive
-                  ? [
-                      BoxShadow(
-                        blurRadius: 18,
-                        color: baseColor.withValues(
-                          alpha: 0.46 + (pulseAmount * 0.16),
-                        ),
-                      ),
-                    ]
-                  : null,
+              border: Border.all(
+                color: isActive ? baseColor : AppPalette.border,
+                width: 1,
+              ),
             ),
           ),
         ),
@@ -801,6 +1302,7 @@ class _BeatNode extends StatelessWidget {
   }
 }
 
+/// BPM 圆盘：外圈拖动调速，中心点击 Tap Tempo，中心 +/- 支持微调和长按连调。
 class BpmDial extends StatefulWidget {
   const BpmDial({
     super.key,
@@ -837,6 +1339,7 @@ class _BpmDialState extends State<BpmDial> with TickerProviderStateMixin {
   double _velocityBpmPerSecond = 0;
   bool _isDragging = false;
   bool _dragStartedOnRing = false;
+  Timer? _stepTimer;
 
   @override
   void initState() {
@@ -868,6 +1371,7 @@ class _BpmDialState extends State<BpmDial> with TickerProviderStateMixin {
 
   @override
   void dispose() {
+    _stepTimer?.cancel();
     _inertiaController.dispose();
     _tapFlashController.dispose();
     super.dispose();
@@ -895,26 +1399,12 @@ class _BpmDialState extends State<BpmDial> with TickerProviderStateMixin {
               onPanUpdate: _handlePanUpdate,
               onPanEnd: _handlePanEnd,
               onPanCancel: _handlePanCancel,
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  boxShadow: [
-                    BoxShadow(
-                      blurRadius: 52,
-                      spreadRadius: 4 + (widget.pulseAmount * 6),
-                      color: const Color(
-                        0xFF19F0C1,
-                      ).withValues(alpha: 0.08 + (widget.pulseAmount * 0.06)),
-                    ),
-                  ],
-                ),
-                child: SizedBox.expand(
-                  child: CustomPaint(
-                    painter: BpmDialPainter(
-                      progress: progress.clamp(0, 1),
-                      pulseAmount: widget.pulseAmount,
-                      isDragging: _isDragging || _inertiaController.isAnimating,
-                    ),
+              child: SizedBox.expand(
+                child: CustomPaint(
+                  painter: BpmDialPainter(
+                    progress: progress.clamp(0, 1),
+                    pulseAmount: widget.pulseAmount,
+                    isDragging: _isDragging || _inertiaController.isAnimating,
                   ),
                 ),
               ),
@@ -931,24 +1421,13 @@ class _BpmDialState extends State<BpmDial> with TickerProviderStateMixin {
               child: DecoratedBox(
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  gradient: RadialGradient(
-                    colors: [
-                      const Color(
-                        0xFF102033,
-                      ).withValues(alpha: 0.94 + (widget.pulseAmount * 0.03)),
-                      const Color(0xFF07111D).withValues(alpha: 0.98),
-                    ],
-                  ),
-                  border: Border.all(
-                    color: Colors.white.withValues(
-                      alpha: 0.08 + (flashAlpha * 0.16),
-                    ),
-                  ),
+                  color: AppPalette.surface,
+                  border: Border.all(color: AppPalette.border),
                   boxShadow: [
                     BoxShadow(
-                      blurRadius: 28,
-                      color: const Color(0xFF000000).withValues(alpha: 0.18),
-                      offset: const Offset(0, 16),
+                      blurRadius: 14,
+                      color: Colors.black.withValues(alpha: 0.24),
+                      offset: const Offset(0, 8),
                     ),
                   ],
                 ),
@@ -963,15 +1442,12 @@ class _BpmDialState extends State<BpmDial> with TickerProviderStateMixin {
                               center: const Alignment(0, -0.08),
                               radius: 0.95,
                               colors: [
-                                const Color(
-                                  0xFFE6FFF8,
-                                ).withValues(alpha: flashAlpha * 0.34),
-                                const Color(
-                                  0xFF19F0C1,
-                                ).withValues(alpha: flashAlpha * 0.48),
-                                const Color(
-                                  0xFF19F0C1,
-                                ).withValues(alpha: flashAlpha * 0.14),
+                                AppPalette.primary.withValues(
+                                  alpha: flashAlpha * 0.18,
+                                ),
+                                AppPalette.primary.withValues(
+                                  alpha: flashAlpha * 0.10,
+                                ),
                                 Colors.transparent,
                               ],
                             ),
@@ -982,7 +1458,7 @@ class _BpmDialState extends State<BpmDial> with TickerProviderStateMixin {
                         child: LayoutBuilder(
                           builder: (context, constraints) {
                             final compactCenter = constraints.maxWidth < 132;
-                            final bpmFontSize = constraints.maxWidth * 0.28;
+                            final bpmFontSize = constraints.maxWidth * 0.32;
 
                             return FittedBox(
                               fit: BoxFit.scaleDown,
@@ -1004,7 +1480,8 @@ class _BpmDialState extends State<BpmDial> with TickerProviderStateMixin {
                                             ?.copyWith(
                                               fontSize: bpmFontSize,
                                               fontWeight: FontWeight.w900,
-                                              letterSpacing: -2.2,
+                                              letterSpacing: 0,
+                                              color: AppPalette.textPrimary,
                                               fontFeatures: const [
                                                 ui.FontFeature.tabularFigures(),
                                               ],
@@ -1019,32 +1496,56 @@ class _BpmDialState extends State<BpmDial> with TickerProviderStateMixin {
                                           .labelMedium
                                           ?.copyWith(
                                             fontSize: compactCenter ? 10 : 12,
-                                            letterSpacing: compactCenter
-                                                ? 2.1
-                                                : 2.8,
-                                            color: Colors.white.withValues(
-                                              alpha: 0.58,
-                                            ),
+                                            letterSpacing: 0,
+                                            color: AppPalette.textSecondary,
                                             fontWeight: FontWeight.w700,
                                           ),
                                     ),
-                                    SizedBox(height: compactCenter ? 8 : 10),
+                                    SizedBox(height: compactCenter ? 2 : 4),
+                                    Text(
+                                      _tempoMarking(_displayBpm.round()),
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .labelMedium
+                                          ?.copyWith(
+                                            color: AppPalette.primary,
+                                            fontWeight: FontWeight.w800,
+                                          ),
+                                    ),
+                                    SizedBox(height: compactCenter ? 6 : 8),
+                                    Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        _BpmStepButton(
+                                          icon: Icons.remove_rounded,
+                                          onTap: () => _stepBpm(-1),
+                                          onLongPressStart: () =>
+                                              _startStepping(-1),
+                                          onLongPressEnd: _stopStepping,
+                                        ),
+                                        const SizedBox(width: 14),
+                                        _BpmStepButton(
+                                          icon: Icons.add_rounded,
+                                          onTap: () => _stepBpm(1),
+                                          onLongPressStart: () =>
+                                              _startStepping(1),
+                                          onLongPressEnd: _stopStepping,
+                                        ),
+                                      ],
+                                    ),
+                                    SizedBox(height: compactCenter ? 6 : 8),
                                     Container(
                                       padding: EdgeInsets.symmetric(
                                         horizontal: compactCenter ? 8 : 10,
                                         vertical: compactCenter ? 5 : 6,
                                       ),
                                       decoration: BoxDecoration(
-                                        color: const Color(
-                                          0xFF19F0C1,
-                                        ).withValues(alpha: 0.14),
-                                        borderRadius: BorderRadius.circular(
-                                          999,
-                                        ),
+                                        color: AppPalette.surfaceVariant,
+                                        borderRadius: BorderRadius.circular(8),
                                         border: Border.all(
-                                          color: const Color(
-                                            0xFF19F0C1,
-                                          ).withValues(alpha: 0.26),
+                                          color: AppPalette.primary.withValues(
+                                            alpha: 0.48,
+                                          ),
                                         ),
                                       ),
                                       child: FittedBox(
@@ -1055,7 +1556,7 @@ class _BpmDialState extends State<BpmDial> with TickerProviderStateMixin {
                                             Icon(
                                               Icons.touch_app_rounded,
                                               size: compactCenter ? 12 : 14,
-                                              color: const Color(0xFF19F0C1),
+                                              color: AppPalette.primary,
                                             ),
                                             SizedBox(
                                               width: compactCenter ? 4 : 6,
@@ -1069,13 +1570,9 @@ class _BpmDialState extends State<BpmDial> with TickerProviderStateMixin {
                                                     fontSize: compactCenter
                                                         ? 10
                                                         : null,
-                                                    color: const Color(
-                                                      0xFF19F0C1,
-                                                    ),
+                                                    color: AppPalette.primary,
                                                     fontWeight: FontWeight.w800,
-                                                    letterSpacing: compactCenter
-                                                        ? 0.8
-                                                        : 1.1,
+                                                    letterSpacing: 0,
                                                   ),
                                             ),
                                           ],
@@ -1217,6 +1714,25 @@ class _BpmDialState extends State<BpmDial> with TickerProviderStateMixin {
     widget.onTapTempo();
   }
 
+  void _stepBpm(int delta) {
+    _inertiaController.stop();
+    _setBpm(_displayBpm + delta, notify: true);
+    unawaited(HapticFeedback.selectionClick());
+  }
+
+  void _startStepping(int delta) {
+    _stepTimer?.cancel();
+    _stepBpm(delta);
+    _stepTimer = Timer.periodic(const Duration(milliseconds: 92), (_) {
+      _stepBpm(delta);
+    });
+  }
+
+  void _stopStepping() {
+    _stepTimer?.cancel();
+    _stepTimer = null;
+  }
+
   double _angleForOffset(Offset localPosition) {
     final center = Offset(widget.size / 2, widget.size / 2);
     return math.atan2(
@@ -1225,7 +1741,7 @@ class _BpmDialState extends State<BpmDial> with TickerProviderStateMixin {
     );
   }
 
-  double get _centerButtonSize => widget.size * 0.44;
+  double get _centerButtonSize => widget.size * 0.58;
 
   bool _isPointOnRotationRing(Offset localPosition) {
     final center = Offset(widget.size / 2, widget.size / 2);
@@ -1243,6 +1759,41 @@ class _BpmDialState extends State<BpmDial> with TickerProviderStateMixin {
       return angle + (2 * math.pi);
     }
     return angle;
+  }
+}
+
+class _BpmStepButton extends StatelessWidget {
+  const _BpmStepButton({
+    required this.icon,
+    required this.onTap,
+    required this.onLongPressStart,
+    required this.onLongPressEnd,
+  });
+
+  final IconData icon;
+  final VoidCallback onTap;
+  final VoidCallback onLongPressStart;
+  final VoidCallback onLongPressEnd;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onLongPressStart: (_) => onLongPressStart(),
+      onLongPressEnd: (_) => onLongPressEnd(),
+      onLongPressCancel: onLongPressEnd,
+      child: IconButton.filledTonal(
+        visualDensity: VisualDensity.compact,
+        onPressed: onTap,
+        icon: Icon(icon, size: 18),
+        style: IconButton.styleFrom(
+          minimumSize: const Size(36, 36),
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          backgroundColor: AppPalette.surfaceVariant,
+          foregroundColor: AppPalette.textPrimary,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        ),
+      ),
+    );
   }
 }
 
@@ -1266,39 +1817,24 @@ class BpmDialPainter extends CustomPainter {
     const startAngle = -math.pi / 2;
     const sweepAngle = math.pi * 2;
 
-    final outerPaint = Paint()
-      ..shader = RadialGradient(
-        colors: [
-          const Color(0xFF13253A).withValues(alpha: 0.96),
-          const Color(0xFF08111B).withValues(alpha: 0.99),
-        ],
-      ).createShader(Rect.fromCircle(center: center, radius: outerRadius));
+    final outerPaint = Paint()..color = AppPalette.surface;
     canvas.drawCircle(center, outerRadius, outerPaint);
 
-    final ringGlowPaint = Paint()
+    final outerBorderPaint = Paint()
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 34
-      ..color = const Color(
-        0xFF5ED7FF,
-      ).withValues(alpha: 0.06 + (0.04 * interactionAlpha))
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 18);
-    canvas.drawCircle(center, trackRadius, ringGlowPaint);
+      ..strokeWidth = 1.4
+      ..color = AppPalette.border;
+    canvas.drawCircle(center, outerRadius - 1, outerBorderPaint);
 
     final trackPaint = Paint()
-      ..color = const Color(
-        0xFF1A3650,
-      ).withValues(alpha: 0.94 + (0.04 * interactionAlpha))
+      ..color = AppPalette.surfaceVariant
       ..style = PaintingStyle.stroke
       ..strokeWidth = 18
       ..strokeCap = StrokeCap.round;
     canvas.drawCircle(center, trackRadius, trackPaint);
 
     final progressPaint = Paint()
-      ..shader = const SweepGradient(
-        startAngle: startAngle,
-        endAngle: startAngle + sweepAngle,
-        colors: [Color(0xFF73E3FF), Color(0xFF19F0C1), Color(0xFF73E3FF)],
-      ).createShader(Rect.fromCircle(center: center, radius: trackRadius))
+      ..color = AppPalette.primary
       ..style = PaintingStyle.stroke
       ..strokeWidth = 16
       ..strokeCap = StrokeCap.round;
@@ -1311,8 +1847,10 @@ class BpmDialPainter extends CustomPainter {
     );
 
     final tickPaint = Paint()
-      ..color = Colors.white.withValues(alpha: 0.14 + (0.06 * interactionAlpha))
-      ..strokeWidth = 2.0
+      ..color = AppPalette.textSecondary.withValues(
+        alpha: 0.28 + (0.08 * interactionAlpha),
+      )
+      ..strokeWidth = 1.4
       ..strokeCap = StrokeCap.round;
     for (var i = 0; i < 72; i++) {
       final angle = startAngle + (sweepAngle * (i / 72));
@@ -1333,9 +1871,7 @@ class BpmDialPainter extends CustomPainter {
     final innerRingPaint = Paint()
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.4
-      ..color = Colors.white.withValues(
-        alpha: 0.10 + (0.04 * interactionAlpha),
-      );
+      ..color = AppPalette.border;
     canvas.drawCircle(center, trackRadius - 20, innerRingPaint);
 
     final handleAngle = startAngle + (sweepAngle * progress);
@@ -1344,22 +1880,14 @@ class BpmDialPainter extends CustomPainter {
       center.dy + math.sin(handleAngle) * trackRadius,
     );
 
-    final glowPaint = Paint()
-      ..color = const Color(0xFF19F0C1).withValues(
-        alpha: 0.30 + (pulseAmount * 0.18) + (0.12 * interactionAlpha),
-      )
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 18);
-    canvas.drawCircle(
-      handleCenter,
-      20 + (pulseAmount * 4) + (interactionAlpha * 2),
-      glowPaint,
-    );
+    final handlePaint = Paint()..color = AppPalette.textPrimary;
+    canvas.drawCircle(handleCenter, 10.5, handlePaint);
 
-    final handlePaint = Paint()
-      ..shader = const LinearGradient(
-        colors: [Color(0xFFF3FFFE), Color(0xFF19F0C1)],
-      ).createShader(Rect.fromCircle(center: handleCenter, radius: 13));
-    canvas.drawCircle(handleCenter, 12.5, handlePaint);
+    final handleBorderPaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 3
+      ..color = AppPalette.primary;
+    canvas.drawCircle(handleCenter, 12.5, handleBorderPaint);
   }
 
   @override
@@ -1370,6 +1898,7 @@ class BpmDialPainter extends CustomPainter {
   }
 }
 
+/// 旧版拍号选择入口，保留用于兼容测试或未来拆分时参考。
 class TimeSignatureSelector extends StatelessWidget {
   const TimeSignatureSelector({
     super.key,
@@ -1382,72 +1911,135 @@ class TimeSignatureSelector extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      height: 58,
-      child: Row(
-        children: [
-          for (var index = 0; index < kTimeSignatures.length; index++) ...[
-            if (index > 0) const SizedBox(width: 8),
-            Expanded(
-              child: _SignatureButton(
-                signature: kTimeSignatures[index],
-                selected: selected == kTimeSignatures[index],
-                onTap: () => onSelected(kTimeSignatures[index]),
-              ),
+    return _ControlChip(
+      label: 'Time Signature',
+      value: selected.label,
+      icon: Icons.grid_4x4_rounded,
+      accent: AppPalette.secondary,
+      onTap: () => _openPicker(context),
+    );
+  }
+
+  Future<void> _openPicker(BuildContext context) async {
+    final picked = await showModalBottomSheet<TimeSignature>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      barrierColor: Colors.black.withValues(alpha: 0.58),
+      builder: (context) {
+        return _SelectorSheet(
+          title: 'Time Signature',
+          children: [
+            _SignatureGroup(
+              title: 'Simple',
+              signatures: const [
+                TimeSignature(label: '2/4', beatsPerBar: 2, caption: 'March'),
+                TimeSignature(label: '3/4', beatsPerBar: 3, caption: 'Waltz'),
+                TimeSignature(label: '4/4', beatsPerBar: 4, caption: 'Common'),
+              ],
+              selected: selected,
+            ),
+            _SignatureGroup(
+              title: 'Compound',
+              signatures: const [
+                TimeSignature(label: '6/8', beatsPerBar: 6, caption: 'Flow'),
+              ],
+              selected: selected,
+            ),
+            _SignatureGroup(
+              title: 'Odd',
+              signatures: const [
+                TimeSignature(label: '5/4', beatsPerBar: 5, caption: 'Odd'),
+              ],
+              selected: selected,
             ),
           ],
+        );
+      },
+    );
+
+    if (picked != null) {
+      onSelected(picked);
+    }
+  }
+}
+
+class _SignatureGroup extends StatelessWidget {
+  const _SignatureGroup({
+    required this.title,
+    required this.signatures,
+    required this.selected,
+  });
+
+  final String title;
+  final List<TimeSignature> signatures;
+  final TimeSignature selected;
+
+  @override
+  Widget build(BuildContext context) {
+    return _SheetGroup(
+      title: title,
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          for (final signature in signatures)
+            _SheetChoiceChip(
+              label: signature.label,
+              caption: signature.caption,
+              selected: signature.label == selected.label,
+              accent: AppPalette.secondary,
+              onTap: () => Navigator.of(context).pop(signature),
+            ),
         ],
       ),
     );
   }
 }
 
-class _SignatureButton extends StatelessWidget {
-  const _SignatureButton({
-    required this.signature,
-    required this.selected,
-    required this.onTap,
-  });
+class _SelectorSheet extends StatelessWidget {
+  const _SelectorSheet({required this.title, required this.children});
 
-  final TimeSignature signature;
-  final bool selected;
-  final VoidCallback onTap;
+  final String title;
+  final List<Widget> children;
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(18),
-      child: Ink(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(18),
-          color: selected
-              ? const Color(0xFF1C404D).withValues(alpha: 0.98)
-              : const Color(0xFF0A121C).withValues(alpha: 0.42),
-          border: Border.all(
-            color: selected
-                ? const Color(0xFF89FFF1).withValues(alpha: 0.72)
-                : Colors.white.withValues(alpha: 0.04),
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 18),
+          decoration: BoxDecoration(
+            color: AppPalette.surface,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: AppPalette.border),
           ),
-          boxShadow: selected
-              ? [
-                  BoxShadow(
-                    blurRadius: 18,
-                    spreadRadius: 1,
-                    color: const Color(0xFF19F0C1).withValues(alpha: 0.12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 38,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: AppPalette.border,
+                    borderRadius: BorderRadius.circular(999),
                   ),
-                ]
-              : null,
-        ),
-        child: Center(
-          child: Text(
-            signature.label,
-            style: Theme.of(context).textTheme.titleSmall?.copyWith(
-              fontWeight: FontWeight.w900,
-              color: selected
-                  ? Colors.white
-                  : Colors.white.withValues(alpha: 0.48),
-            ),
+                ),
+              ),
+              const SizedBox(height: 14),
+              Text(
+                title,
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                  color: AppPalette.textPrimary,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 14),
+              ...children,
+            ],
           ),
         ),
       ),
@@ -1455,26 +2047,229 @@ class _SignatureButton extends StatelessWidget {
   }
 }
 
-class _TransportPanel extends StatelessWidget {
-  const _TransportPanel({
+class _SheetGroup extends StatelessWidget {
+  const _SheetGroup({required this.title, required this.child});
+
+  final String title;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: Theme.of(context).textTheme.labelMedium?.copyWith(
+              color: AppPalette.textSecondary,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0,
+            ),
+          ),
+          const SizedBox(height: 8),
+          child,
+        ],
+      ),
+    );
+  }
+}
+
+class _SheetChoiceChip extends StatelessWidget {
+  const _SheetChoiceChip({
+    required this.label,
+    required this.caption,
+    required this.selected,
+    required this.accent,
+    required this.onTap,
+  });
+
+  final String label;
+  final String caption;
+  final bool selected;
+  final Color accent;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 140),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: selected
+              ? accent.withValues(alpha: 0.14)
+              : AppPalette.surfaceVariant,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: selected ? accent : AppPalette.border),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              label,
+              style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                color: selected ? accent : AppPalette.textPrimary,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              caption,
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                color: AppPalette.textSecondary,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class SubdivisionSelector extends StatelessWidget {
+  const SubdivisionSelector({
+    super.key,
+    required this.selected,
+    required this.onSelected,
+  });
+
+  final SubdivisionType selected;
+  final ValueChanged<SubdivisionType> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return _ControlChip(
+      label: 'Subdivision',
+      value: selected.notation,
+      icon: Icons.music_note_rounded,
+      accent: AppPalette.primary,
+      onTap: () => _openPicker(context),
+    );
+  }
+
+  Future<void> _openPicker(BuildContext context) async {
+    final picked = await showModalBottomSheet<SubdivisionType>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      barrierColor: Colors.black.withValues(alpha: 0.58),
+      builder: (context) {
+        return _SelectorSheet(
+          title: 'Subdivision',
+          children: [
+            _SheetGroup(
+              title: 'Pulse',
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final subdivision in SubdivisionType.values)
+                    _SheetChoiceChip(
+                      label: subdivision.notation,
+                      caption: subdivision.label,
+                      selected: selected == subdivision,
+                      accent: AppPalette.primary,
+                      onTap: () => Navigator.of(context).pop(subdivision),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (picked != null) {
+      onSelected(picked);
+    }
+  }
+}
+
+class _ControlChip extends StatelessWidget {
+  const _ControlChip({
+    required this.label,
+    required this.value,
+    required this.icon,
+    required this.accent,
+    required this.onTap,
+  });
+
+  final String label;
+  final String value;
+  final IconData icon;
+  final Color accent;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        height: 48,
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        decoration: BoxDecoration(
+          color: AppPalette.surface,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: AppPalette.border),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, size: 18, color: accent),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                label,
+                style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                  color: AppPalette.textSecondary,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0,
+                ),
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: accent.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: accent.withValues(alpha: 0.40)),
+              ),
+              child: Text(
+                value,
+                style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                  color: accent,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            const Icon(
+              Icons.keyboard_arrow_down_rounded,
+              size: 20,
+              color: AppPalette.textSecondary,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class TransportPanel extends StatelessWidget {
+  const TransportPanel({
+    super.key,
     required this.isPlaying,
     required this.isBusy,
-    required this.statusCopy,
-    required this.activeBeat,
-    required this.bars,
-    required this.beatsPerBar,
-    required this.hasNativeEngine,
     required this.compact,
     required this.onTogglePlayback,
   });
 
   final bool isPlaying;
   final bool isBusy;
-  final String statusCopy;
-  final int activeBeat;
-  final int bars;
-  final int beatsPerBar;
-  final bool hasNativeEngine;
   final bool compact;
   final VoidCallback onTogglePlayback;
 
@@ -1484,94 +2279,38 @@ class _TransportPanel extends StatelessWidget {
 
     return Container(
       width: double.infinity,
-      padding: EdgeInsets.all(compact ? 16 : 18),
+      padding: EdgeInsets.all(compact ? 12 : 14),
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(28),
-        color: Colors.white.withValues(alpha: 0.05),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
-        boxShadow: [
-          BoxShadow(
-            blurRadius: 38,
-            offset: const Offset(0, 20),
-            color: const Color(0xFF000000).withValues(alpha: 0.18),
-          ),
-        ],
+        borderRadius: BorderRadius.circular(10),
+        color: AppPalette.surface,
+        border: Border.all(color: AppPalette.border),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(6),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(24),
-              color: const Color(0xFF183247).withValues(alpha: 0.92),
-              border: Border.all(color: Colors.white.withValues(alpha: 0.09)),
-              boxShadow: [
-                BoxShadow(
-                  blurRadius: 18,
-                  offset: const Offset(0, 12),
-                  color: const Color(0xFF000000).withValues(alpha: 0.14),
-                ),
-              ],
-            ),
-            child: FilledButton.icon(
-              style: FilledButton.styleFrom(
-                minimumSize: const Size.fromHeight(58),
-                backgroundColor: isPlaying
-                    ? const Color(0xFF112A3C)
-                    : const Color(0xFF19F0C1),
-                foregroundColor: isPlaying
-                    ? Colors.white
-                    : const Color(0xFF07111D),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(20),
-                ),
-              ),
-              onPressed: isBusy ? null : onTogglePlayback,
-              icon: Icon(
-                isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
-              ),
-              label: Text(
-                isPlaying ? 'Stop Pulse' : 'Start Pulse',
-                style: theme.textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w800,
-                ),
+          FilledButton.icon(
+            style: FilledButton.styleFrom(
+              minimumSize: const Size.fromHeight(60),
+              backgroundColor: isPlaying
+                  ? AppPalette.danger
+                  : AppPalette.primary,
+              foregroundColor: AppPalette.background,
+              disabledBackgroundColor: AppPalette.surfaceVariant,
+              disabledForegroundColor: AppPalette.textSecondary,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
               ),
             ),
-          ),
-          SizedBox(height: compact ? 12 : 14),
-          Row(
-            children: [
-              Expanded(
-                child: _MetricTile(
-                  label: 'BEAT',
-                  value: '${activeBeat + 1}/$beatsPerBar',
-                ),
+            onPressed: isBusy ? null : onTogglePlayback,
+            icon: Icon(
+              isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+            ),
+            label: Text(
+              isPlaying ? 'Stop' : 'Start',
+              style: theme.textTheme.titleMedium?.copyWith(
+                color: AppPalette.background,
+                fontWeight: FontWeight.w900,
               ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: _MetricTile(label: 'BARS', value: '$bars'),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: _MetricTile(
-                  label: 'ENGINE',
-                  value: hasNativeEngine ? 'LIVE' : 'PREVIEW',
-                  accent: hasNativeEngine
-                      ? const Color(0xFF19F0C1)
-                      : const Color(0xFFFF8AA7),
-                ),
-              ),
-            ],
-          ),
-          SizedBox(height: compact ? 10 : 12),
-          Text(
-            statusCopy,
-            textAlign: TextAlign.center,
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: Colors.white.withValues(alpha: 0.58),
-              letterSpacing: 0.2,
             ),
           ),
         ],
@@ -1589,22 +2328,22 @@ class _MetricTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final resolvedAccent = accent ?? Colors.white;
+    final resolvedAccent = accent ?? AppPalette.textPrimary;
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(18),
-        color: Colors.white.withValues(alpha: 0.035),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+        borderRadius: BorderRadius.circular(8),
+        color: AppPalette.surfaceVariant,
+        border: Border.all(color: AppPalette.border),
       ),
       child: Column(
         children: [
           Text(
             label,
             style: Theme.of(context).textTheme.labelSmall?.copyWith(
-              color: Colors.white.withValues(alpha: 0.44),
-              letterSpacing: 1.2,
+              color: AppPalette.textSecondary,
+              letterSpacing: 0,
               fontWeight: FontWeight.w700,
             ),
           ),
@@ -1612,7 +2351,7 @@ class _MetricTile extends StatelessWidget {
           Text(
             value,
             style: Theme.of(context).textTheme.titleSmall?.copyWith(
-              color: resolvedAccent.withValues(alpha: 0.92),
+              color: resolvedAccent,
               fontWeight: FontWeight.w800,
             ),
           ),
@@ -1622,13 +2361,294 @@ class _MetricTile extends StatelessWidget {
   }
 }
 
-class MetronomeSettingsSheet extends StatefulWidget {
-  const MetronomeSettingsSheet({
+/// 练习统计折叠面板：今日时长、小节数、原生引擎状态和最近练习记录。
+class PracticeStatsPanel extends StatelessWidget {
+  const PracticeStatsPanel({
+    super.key,
+    required this.todayPracticeDuration,
+    required this.bars,
+    required this.hasNativeEngine,
+    required this.statusCopy,
+    required this.practiceLogs,
+  });
+
+  final Duration todayPracticeDuration;
+  final int bars;
+  final bool hasNativeEngine;
+  final String statusCopy;
+  final List<PracticeLog> practiceLogs;
+
+  @override
+  Widget build(BuildContext context) {
+    return Theme(
+      data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+      child: Container(
+        decoration: BoxDecoration(
+          color: AppPalette.surface,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: AppPalette.border),
+        ),
+        child: ExpansionTile(
+          tilePadding: const EdgeInsets.symmetric(horizontal: 14),
+          childrenPadding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+          iconColor: AppPalette.textSecondary,
+          collapsedIconColor: AppPalette.textSecondary,
+          title: Text(
+            'Stats',
+            style: Theme.of(context).textTheme.titleSmall?.copyWith(
+              color: AppPalette.textPrimary,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          subtitle: Text(
+            '${_formatCompactDuration(todayPracticeDuration)} today',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: AppPalette.textSecondary,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: _MetricTile(
+                    label: 'TODAY',
+                    value: _formatCompactDuration(todayPracticeDuration),
+                    accent: AppPalette.primary,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _MetricTile(label: 'BARS', value: '$bars'),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _MetricTile(
+                    label: 'ENGINE',
+                    value: hasNativeEngine ? 'LIVE' : 'PREVIEW',
+                    accent: hasNativeEngine
+                        ? AppPalette.primary
+                        : AppPalette.danger,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                statusCopy,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: AppPalette.textSecondary,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 拍号抽屉。
+///
+/// 双滚轮分别选择拍数和音符时值，快捷拍型负责快速跳转常用组合。
+class TimeSignatureSheet extends StatefulWidget {
+  const TimeSignatureSheet({
+    super.key,
+    required this.initialSignature,
+    required this.scrollController,
+    required this.onConfirmed,
+  });
+
+  final TimeSignature initialSignature;
+  final ScrollController scrollController;
+  final ValueChanged<TimeSignature> onConfirmed;
+
+  @override
+  State<TimeSignatureSheet> createState() => _TimeSignatureSheetState();
+}
+
+class _TimeSignatureSheetState extends State<TimeSignatureSheet> {
+  static const double _pickerItemExtent = 42;
+
+  late int _beats;
+  late int _noteValue;
+  late final FixedExtentScrollController _beatsController;
+  late final FixedExtentScrollController _noteValueController;
+
+  @override
+  void initState() {
+    super.initState();
+    _beats = widget.initialSignature.beatsPerBar;
+    _noteValue = widget.initialSignature.noteValue;
+    _beatsController = FixedExtentScrollController(initialItem: _beats - 1);
+    _noteValueController = FixedExtentScrollController(
+      initialItem: math.max(0, kNoteValues.indexOf(_noteValue)),
+    );
+  }
+
+  @override
+  void dispose() {
+    _beatsController.dispose();
+    _noteValueController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _FunctionSheetFrame(
+      title: 'Meter',
+      scrollController: widget.scrollController,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _SettingsSectionTitle(title: 'Meter wheels'),
+          const SizedBox(height: 10),
+          Container(
+            height: 188,
+            decoration: BoxDecoration(
+              color: AppPalette.surfaceVariant,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: AppPalette.border),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: CupertinoPicker(
+                    scrollController: _beatsController,
+                    itemExtent: _pickerItemExtent,
+                    backgroundColor: Colors.transparent,
+                    selectionOverlay:
+                        const CupertinoPickerDefaultSelectionOverlay(
+                          background: Color(0x22333B45),
+                        ),
+                    onSelectedItemChanged: (index) {
+                      setState(() {
+                        _beats = index + 1;
+                      });
+                    },
+                    children: [
+                      for (var value = 1; value <= 16; value++)
+                        Center(
+                          child: Text(
+                            '$value',
+                            style: Theme.of(context).textTheme.titleLarge
+                                ?.copyWith(
+                                  color: AppPalette.textPrimary,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                Container(width: 1, color: AppPalette.border),
+                Expanded(
+                  child: CupertinoPicker(
+                    scrollController: _noteValueController,
+                    itemExtent: _pickerItemExtent,
+                    backgroundColor: Colors.transparent,
+                    selectionOverlay:
+                        const CupertinoPickerDefaultSelectionOverlay(
+                          background: Color(0x22333B45),
+                        ),
+                    onSelectedItemChanged: (index) {
+                      setState(() {
+                        _noteValue = kNoteValues[index];
+                      });
+                    },
+                    children: [
+                      for (final value in kNoteValues)
+                        Center(
+                          child: Text(
+                            '$value',
+                            style: Theme.of(context).textTheme.titleLarge
+                                ?.copyWith(
+                                  color: AppPalette.textPrimary,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 18),
+          _SettingsSectionTitle(title: 'Quick meters'),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final signature in kTimeSignatures)
+                _SettingsChoiceChip(
+                  label: signature.label,
+                  selected:
+                      _beats == signature.beatsPerBar &&
+                      _noteValue == signature.noteValue,
+                  onTap: () {
+                    setState(() {
+                      _beats = signature.beatsPerBar;
+                      _noteValue = signature.noteValue;
+                    });
+                    _beatsController.animateToItem(
+                      signature.beatsPerBar - 1,
+                      duration: const Duration(milliseconds: 180),
+                      curve: Curves.easeOutCubic,
+                    );
+                    _noteValueController.animateToItem(
+                      kNoteValues.indexOf(signature.noteValue),
+                      duration: const Duration(milliseconds: 180),
+                      curve: Curves.easeOutCubic,
+                    );
+                  },
+                ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          _PreviewPanel(
+            icon: Icons.grid_4x4_rounded,
+            title: 'Current meter',
+            value: '$_beats/$_noteValue',
+            accent: AppPalette.secondary,
+          ),
+          const SizedBox(height: 18),
+          _SheetActionButton(
+            label: 'Confirm',
+            icon: Icons.check_rounded,
+            onPressed: () {
+              widget.onConfirmed(
+                TimeSignature(
+                  label: '$_beats/$_noteValue',
+                  beatsPerBar: _beats,
+                  noteValue: _noteValue,
+                  caption: 'Custom meter',
+                ),
+              );
+              Navigator.of(context).pop();
+            },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 音色抽屉。
+///
+/// 第二轮需求要求暂不扩展真实音源逻辑，因此这里主要作为 UI 入口和现有音色字段编辑。
+class SoundPresetSheet extends StatefulWidget {
+  const SoundPresetSheet({
     super.key,
     required this.accentSound,
     required this.regularSound,
     required this.voiceMode,
     required this.accentHaptics,
+    required this.scrollController,
     required this.onAccentSoundChanged,
     required this.onRegularSoundChanged,
     required this.onVoiceModeChanged,
@@ -1639,6 +2659,801 @@ class MetronomeSettingsSheet extends StatefulWidget {
   final SoundProfile regularSound;
   final VoiceMode voiceMode;
   final bool accentHaptics;
+  final ScrollController scrollController;
+  final ValueChanged<SoundProfile> onAccentSoundChanged;
+  final ValueChanged<SoundProfile> onRegularSoundChanged;
+  final ValueChanged<VoiceMode> onVoiceModeChanged;
+  final ValueChanged<bool> onAccentHapticsChanged;
+
+  @override
+  State<SoundPresetSheet> createState() => _SoundPresetSheetState();
+}
+
+class _SoundPresetSheetState extends State<SoundPresetSheet> {
+  late SoundProfile _accentSound;
+  late SoundProfile _regularSound;
+  late VoiceMode _voiceMode;
+  late bool _accentHaptics;
+
+  @override
+  void initState() {
+    super.initState();
+    _accentSound = widget.accentSound;
+    _regularSound = widget.regularSound;
+    _voiceMode = widget.voiceMode;
+    _accentHaptics = widget.accentHaptics;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _FunctionSheetFrame(
+      title: 'Tone',
+      scrollController: widget.scrollController,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _SettingsSectionTitle(title: 'Preset'),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              for (final sound in SoundProfile.values)
+                _SettingsChoiceChip(
+                  label: sound.label,
+                  icon: sound.icon,
+                  color: sound.color,
+                  selected: _regularSound == sound,
+                  onTap: () {
+                    setState(() {
+                      _regularSound = sound;
+                    });
+                    widget.onRegularSoundChanged(sound);
+                  },
+                ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          _SettingsSectionTitle(title: 'Accent layer'),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              for (final sound in SoundProfile.values)
+                _SettingsChoiceChip(
+                  label: sound.label,
+                  icon: sound.icon,
+                  color: sound.color,
+                  selected: _accentSound == sound,
+                  onTap: () {
+                    setState(() {
+                      _accentSound = sound;
+                    });
+                    widget.onAccentSoundChanged(sound);
+                  },
+                ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          _SettingsSectionTitle(title: 'Voice counting'),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              for (final mode in VoiceMode.values)
+                _SettingsChoiceChip(
+                  label: mode.label,
+                  selected: _voiceMode == mode,
+                  onTap: () {
+                    setState(() {
+                      _voiceMode = mode;
+                    });
+                    widget.onVoiceModeChanged(mode);
+                  },
+                ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          Container(
+            decoration: BoxDecoration(
+              color: AppPalette.surfaceVariant,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: AppPalette.border),
+            ),
+            child: SwitchListTile(
+              title: const Text('Accent haptic pulse'),
+              value: _accentHaptics,
+              activeThumbColor: AppPalette.primary,
+              activeTrackColor: AppPalette.primary.withValues(alpha: 0.28),
+              onChanged: (value) {
+                setState(() {
+                  _accentHaptics = value;
+                });
+                widget.onAccentHapticsChanged(value);
+              },
+            ),
+          ),
+          const SizedBox(height: 18),
+          _PreviewPanel(
+            icon: Icons.volume_up_rounded,
+            title: 'Audition',
+            value: 'UI reserved',
+            subtitle: 'Real source logic is paused',
+            accent: AppPalette.primary,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 调音器抽屉占位。
+/// 没有接入真实麦克风识别前，不展示假音高数据。
+class TunerSheet extends StatelessWidget {
+  const TunerSheet({super.key, required this.scrollController});
+
+  final ScrollController scrollController;
+
+  @override
+  Widget build(BuildContext context) {
+    return _FunctionSheetFrame(
+      title: 'Tuner',
+      scrollController: scrollController,
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          color: AppPalette.surfaceVariant,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: AppPalette.border),
+        ),
+        child: Column(
+          children: [
+            const Icon(
+              Icons.construction_rounded,
+              size: 42,
+              color: Color(0xFF7AD7A8),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              '调音器开发中',
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                color: AppPalette.textPrimary,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 定时器抽屉。
+/// Apply 后会启动首页状态中的倒计时，倒计时归零自动停止全局节拍器。
+class TimerSheet extends StatefulWidget {
+  const TimerSheet({
+    super.key,
+    required this.enabled,
+    required this.duration,
+    required this.scrollController,
+    required this.onChanged,
+  });
+
+  final bool enabled;
+  final Duration duration;
+  final ScrollController scrollController;
+  final void Function({required bool enabled, required Duration duration})
+  onChanged;
+
+  @override
+  State<TimerSheet> createState() => _TimerSheetState();
+}
+
+class _TimerSheetState extends State<TimerSheet> {
+  late bool _enabled;
+  late int _minutes;
+
+  @override
+  void initState() {
+    super.initState();
+    _enabled = widget.enabled;
+    _minutes = math.max(
+      1,
+      widget.duration.inMinutes == 0 ? 5 : widget.duration.inMinutes,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _FunctionSheetFrame(
+      title: 'Timer',
+      scrollController: widget.scrollController,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Center(
+            child: SizedBox(
+              width: 268,
+              child: SegmentedButton<bool>(
+                style: const ButtonStyle(
+                  fixedSize: WidgetStatePropertyAll(Size(132, 44)),
+                ),
+                segments: const [
+                  ButtonSegment(value: false, label: Text('Off')),
+                  ButtonSegment(value: true, label: Text('Countdown')),
+                ],
+                selected: {_enabled},
+                onSelectionChanged: (values) {
+                  setState(() {
+                    _enabled = values.first;
+                  });
+                },
+              ),
+            ),
+          ),
+          const SizedBox(height: 18),
+          _SettingsSectionTitle(title: 'Duration'),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final value in const [1, 3, 5, 10, 15])
+                _SettingsChoiceChip(
+                  label: '${value}m',
+                  selected: _minutes == value,
+                  onTap: () => setState(() {
+                    _enabled = true;
+                    _minutes = value;
+                  }),
+                ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              _RoundStepButton(
+                icon: Icons.remove_rounded,
+                onTap: () => setState(() {
+                  _enabled = true;
+                  _minutes = math.max(1, _minutes - 1);
+                }),
+              ),
+              Expanded(
+                child: Center(
+                  child: Text(
+                    '$_minutes min',
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      color: AppPalette.textPrimary,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ),
+              ),
+              _RoundStepButton(
+                icon: Icons.add_rounded,
+                onTap: () => setState(() {
+                  _enabled = true;
+                  _minutes = math.min(240, _minutes + 1);
+                }),
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          _PreviewPanel(
+            icon: Icons.timer_rounded,
+            title: 'Remaining',
+            value: _enabled
+                ? _formatTimerDuration(Duration(minutes: _minutes))
+                : '--:--',
+            accent: const Color(0xFFFF7A90),
+          ),
+          const SizedBox(height: 18),
+          _SheetActionButton(
+            label: 'Apply',
+            icon: Icons.check_rounded,
+            onPressed: () {
+              widget.onChanged(
+                enabled: _enabled,
+                duration: Duration(minutes: _minutes),
+              );
+              Navigator.of(context).pop();
+            },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _FunctionSheetFrame extends StatelessWidget {
+  const _FunctionSheetFrame({
+    required this.title,
+    required this.scrollController,
+    required this.child,
+  });
+
+  final String title;
+  final ScrollController scrollController;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(18, 12, 18, 18),
+          decoration: BoxDecoration(
+            color: AppPalette.surface,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: AppPalette.border),
+          ),
+          child: ListView(
+            controller: scrollController,
+            children: [
+              Center(
+                child: Container(
+                  width: 42,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(999),
+                    color: AppPalette.border,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 14),
+              Row(
+                children: [
+                  Text(
+                    title,
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      color: AppPalette.textPrimary,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.close_rounded),
+                    style: IconButton.styleFrom(
+                      backgroundColor: AppPalette.surfaceVariant,
+                      foregroundColor: AppPalette.textPrimary,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              child,
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _RoundStepButton extends StatelessWidget {
+  const _RoundStepButton({required this.icon, required this.onTap});
+
+  final IconData icon;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton.filledTonal(
+      onPressed: onTap,
+      icon: Icon(icon),
+      style: IconButton.styleFrom(
+        minimumSize: const Size(48, 48),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      ),
+    );
+  }
+}
+
+class _PreviewPanel extends StatelessWidget {
+  const _PreviewPanel({
+    required this.icon,
+    required this.title,
+    required this.value,
+    required this.accent,
+    this.subtitle,
+  });
+
+  final IconData icon;
+  final String title;
+  final String value;
+  final String? subtitle;
+  final Color accent;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppPalette.surfaceVariant,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppPalette.border),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, color: accent),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                    color: AppPalette.textSecondary,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                Text(
+                  subtitle == null ? value : '$value  $subtitle',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    color: AppPalette.textPrimary,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SheetActionButton extends StatelessWidget {
+  const _SheetActionButton({
+    required this.label,
+    required this.icon,
+    required this.onPressed,
+  });
+
+  final String label;
+  final IconData icon;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return FilledButton.icon(
+      onPressed: onPressed,
+      icon: Icon(icon),
+      label: Text(label),
+      style: FilledButton.styleFrom(
+        minimumSize: const Size.fromHeight(52),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      ),
+    );
+  }
+}
+
+/// 吉他社网页页签。
+/// WebView 内右下角的浮动 Start/Stop 和首页按钮共享同一个播放状态。
+class GuitarSocietyPage extends StatefulWidget {
+  const GuitarSocietyPage({
+    super.key,
+    required this.isPlaying,
+    required this.isBusy,
+    required this.onTogglePlayback,
+  });
+
+  final bool isPlaying;
+  final bool isBusy;
+  final VoidCallback onTogglePlayback;
+
+  @override
+  State<GuitarSocietyPage> createState() => _GuitarSocietyPageState();
+}
+
+class _GuitarSocietyPageState extends State<GuitarSocietyPage> {
+  late final WebViewController _controller;
+  var _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..setNavigationDelegate(
+        NavigationDelegate(
+          onPageFinished: (_) {
+            if (mounted) {
+              setState(() {
+                _isLoading = false;
+              });
+            }
+          },
+        ),
+      )
+      ..loadRequest(Uri.parse('https://www.jitashe.org/'));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ColoredBox(
+      color: AppPalette.background,
+      child: SafeArea(
+        child: Stack(
+          children: [
+            WebViewWidget(controller: _controller),
+            if (_isLoading)
+              const LinearProgressIndicator(
+                color: AppPalette.primary,
+                backgroundColor: AppPalette.surface,
+              ),
+            Positioned(
+              right: 16,
+              bottom: 18,
+              child: FloatingActionButton.extended(
+                heroTag: 'web-metronome-transport',
+                onPressed: widget.isBusy ? null : widget.onTogglePlayback,
+                backgroundColor: widget.isPlaying
+                    ? AppPalette.danger
+                    : AppPalette.primary,
+                foregroundColor: AppPalette.background,
+                icon: Icon(
+                  widget.isPlaying
+                      ? Icons.pause_rounded
+                      : Icons.play_arrow_rounded,
+                ),
+                label: Text(widget.isPlaying ? 'Stop' : 'Start'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 设置页：负责命名保存、恢复和删除本地节拍器配置。
+class SettingsPage extends StatefulWidget {
+  const SettingsPage({
+    super.key,
+    required this.presets,
+    required this.onSavePreset,
+    required this.onRestorePreset,
+    required this.onDeletePreset,
+  });
+
+  final List<SavedMetronomePreset> presets;
+  final ValueChanged<String> onSavePreset;
+  final ValueChanged<SavedMetronomePreset> onRestorePreset;
+  final ValueChanged<SavedMetronomePreset> onDeletePreset;
+
+  @override
+  State<SettingsPage> createState() => _SettingsPageState();
+}
+
+class _SettingsPageState extends State<SettingsPage> {
+  late final TextEditingController _nameController;
+
+  @override
+  void initState() {
+    super.initState();
+    _nameController = TextEditingController();
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ColoredBox(
+      color: AppPalette.background,
+      child: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(20, 18, 20, 28),
+          children: [
+            Text(
+              'Settings',
+              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                color: AppPalette.textPrimary,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+            const SizedBox(height: 18),
+            TextField(
+              controller: _nameController,
+              style: const TextStyle(color: AppPalette.textPrimary),
+              decoration: InputDecoration(
+                labelText: 'Configuration name',
+                labelStyle: const TextStyle(color: AppPalette.textSecondary),
+                filled: true,
+                fillColor: AppPalette.surface,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: const BorderSide(color: AppPalette.border),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: const BorderSide(color: AppPalette.border),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            FilledButton.icon(
+              onPressed: () {
+                widget.onSavePreset(_nameController.text);
+                _nameController.clear();
+                FocusScope.of(context).unfocus();
+              },
+              icon: const Icon(Icons.save_rounded),
+              label: const Text('Save current configuration'),
+              style: FilledButton.styleFrom(
+                minimumSize: const Size.fromHeight(52),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+            ),
+            const SizedBox(height: 22),
+            _SettingsSectionTitle(title: 'Saved configurations'),
+            const SizedBox(height: 10),
+            if (widget.presets.isEmpty)
+              Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: AppPalette.surface,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: AppPalette.border),
+                ),
+                child: Text(
+                  'No saved configurations yet.',
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: AppPalette.textSecondary,
+                  ),
+                ),
+              )
+            else
+              for (final preset in widget.presets) ...[
+                _SavedPresetTile(
+                  preset: preset,
+                  onRestore: () => widget.onRestorePreset(preset),
+                  onDelete: () => widget.onDeletePreset(preset),
+                ),
+                const SizedBox(height: 10),
+              ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 已保存配置的列表项，展示配置摘要并提供恢复/删除操作。
+class _SavedPresetTile extends StatelessWidget {
+  const _SavedPresetTile({
+    required this.preset,
+    required this.onRestore,
+    required this.onDelete,
+  });
+
+  final SavedMetronomePreset preset;
+  final VoidCallback onRestore;
+  final VoidCallback onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    final beatSummary = preset.beatPattern
+        .map((token) => BeatType.fromToken(token).shortLabel)
+        .join(' ');
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppPalette.surface,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppPalette.border),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  preset.name,
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    color: AppPalette.textPrimary,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '${preset.bpm} BPM | ${preset.timeSignature} | $beatSummary',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: AppPalette.textSecondary,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            tooltip: 'Restore',
+            onPressed: onRestore,
+            icon: const Icon(Icons.restore_rounded),
+            color: AppPalette.primary,
+          ),
+          IconButton(
+            tooltip: 'Delete',
+            onPressed: onDelete,
+            icon: const Icon(Icons.delete_outline_rounded),
+            color: AppPalette.danger,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 三页底部导航：吉他社、节拍器、设置。
+class BottomNavigation extends StatelessWidget {
+  const BottomNavigation({
+    super.key,
+    required this.selectedIndex,
+    required this.onDestinationSelected,
+  });
+
+  final int selectedIndex;
+  final ValueChanged<int> onDestinationSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return NavigationBar(
+      selectedIndex: selectedIndex,
+      onDestinationSelected: onDestinationSelected,
+      height: 68,
+      backgroundColor: AppPalette.surface,
+      indicatorColor: AppPalette.primary.withValues(alpha: 0.16),
+      destinations: const [
+        NavigationDestination(icon: Icon(Icons.public_rounded), label: '吉他社'),
+        NavigationDestination(icon: Icon(Icons.speed_rounded), label: '节拍器'),
+        NavigationDestination(icon: Icon(Icons.settings_rounded), label: '设置'),
+      ],
+    );
+  }
+}
+
+/// 第一轮遗留的综合设置抽屉。
+/// 当前主流程已改为顶部四个功能抽屉，保留此组件作为历史/后续整合参考。
+class MetronomeSettingsSheet extends StatefulWidget {
+  const MetronomeSettingsSheet({
+    super.key,
+    required this.accentSound,
+    required this.regularSound,
+    required this.voiceMode,
+    required this.accentHaptics,
+    required this.todayPracticeDuration,
+    required this.practiceLogs,
+    required this.onAccentSoundChanged,
+    required this.onRegularSoundChanged,
+    required this.onVoiceModeChanged,
+    required this.onAccentHapticsChanged,
+  });
+
+  final SoundProfile accentSound;
+  final SoundProfile regularSound;
+  final VoiceMode voiceMode;
+  final bool accentHaptics;
+  final Duration todayPracticeDuration;
+  final List<PracticeLog> practiceLogs;
   final ValueChanged<SoundProfile> onAccentSoundChanged;
   final ValueChanged<SoundProfile> onRegularSoundChanged;
   final ValueChanged<VoiceMode> onVoiceModeChanged;
@@ -1669,17 +3484,18 @@ class _MetronomeSettingsSheetState extends State<MetronomeSettingsSheet> {
       top: false,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(32),
-          child: BackdropFilter(
-            filter: ui.ImageFilter.blur(sigmaX: 24, sigmaY: 24),
-            child: Container(
-              padding: const EdgeInsets.fromLTRB(18, 14, 18, 22),
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(32),
-                color: const Color(0xFF0C1826).withValues(alpha: 0.92),
-                border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
-              ),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(18, 14, 18, 22),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14),
+            color: AppPalette.surface,
+            border: Border.all(color: AppPalette.border),
+          ),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.sizeOf(context).height * 0.84,
+            ),
+            child: SingleChildScrollView(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -1690,7 +3506,7 @@ class _MetronomeSettingsSheetState extends State<MetronomeSettingsSheet> {
                       height: 4,
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(999),
-                        color: Colors.white.withValues(alpha: 0.18),
+                        color: AppPalette.border,
                       ),
                     ),
                   ),
@@ -1700,6 +3516,7 @@ class _MetronomeSettingsSheetState extends State<MetronomeSettingsSheet> {
                       Text(
                         'Session Settings',
                         style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                          color: AppPalette.textPrimary,
                           fontWeight: FontWeight.w800,
                         ),
                       ),
@@ -1708,8 +3525,8 @@ class _MetronomeSettingsSheetState extends State<MetronomeSettingsSheet> {
                         onPressed: () => Navigator.of(context).pop(),
                         icon: const Icon(Icons.close_rounded),
                         style: IconButton.styleFrom(
-                          backgroundColor: Colors.white.withValues(alpha: 0.05),
-                          foregroundColor: Colors.white,
+                          backgroundColor: AppPalette.surfaceVariant,
+                          foregroundColor: AppPalette.textPrimary,
                         ),
                       ),
                     ],
@@ -1718,8 +3535,13 @@ class _MetronomeSettingsSheetState extends State<MetronomeSettingsSheet> {
                   Text(
                     'Move sound, language, and haptics here so the main workspace stays focused on tempo.',
                     style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: Colors.white.withValues(alpha: 0.60),
+                      color: AppPalette.textSecondary,
                     ),
+                  ),
+                  const SizedBox(height: 18),
+                  _PracticeHistoryPanel(
+                    todayDuration: widget.todayPracticeDuration,
+                    logs: widget.practiceLogs,
                   ),
                   const SizedBox(height: 18),
                   _SettingsSectionTitle(title: 'Accent Sound'),
@@ -1788,11 +3610,9 @@ class _MetronomeSettingsSheetState extends State<MetronomeSettingsSheet> {
                   const SizedBox(height: 18),
                   Container(
                     decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.04),
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(
-                        color: Colors.white.withValues(alpha: 0.08),
-                      ),
+                      color: AppPalette.surfaceVariant,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: AppPalette.border),
                     ),
                     child: SwitchListTile(
                       title: const Text('Accent Haptic Pulse'),
@@ -1800,10 +3620,10 @@ class _MetronomeSettingsSheetState extends State<MetronomeSettingsSheet> {
                         'Keep a short tactile cue on the downbeat.',
                       ),
                       value: _accentHaptics,
-                      activeThumbColor: const Color(0xFF19F0C1),
-                      activeTrackColor: const Color(
-                        0xFF19F0C1,
-                      ).withValues(alpha: 0.28),
+                      activeThumbColor: AppPalette.primary,
+                      activeTrackColor: AppPalette.primary.withValues(
+                        alpha: 0.28,
+                      ),
                       contentPadding: const EdgeInsets.symmetric(
                         horizontal: 16,
                       ),
@@ -1836,10 +3656,122 @@ class _SettingsSectionTitle extends StatelessWidget {
       title,
       style: Theme.of(context).textTheme.titleSmall?.copyWith(
         fontWeight: FontWeight.w800,
-        color: Colors.white.withValues(alpha: 0.90),
+        color: AppPalette.textPrimary,
       ),
     );
   }
+}
+
+class _PracticeHistoryPanel extends StatelessWidget {
+  const _PracticeHistoryPanel({
+    required this.todayDuration,
+    required this.logs,
+  });
+
+  final Duration todayDuration;
+  final List<PracticeLog> logs;
+
+  @override
+  Widget build(BuildContext context) {
+    final visibleLogs = logs.take(4).toList();
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppPalette.surfaceVariant,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppPalette.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(
+                Icons.history_rounded,
+                size: 18,
+                color: AppPalette.primary,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                'Practice History',
+                style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                  color: AppPalette.textPrimary,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const Spacer(),
+              Text(
+                _formatCompactDuration(todayDuration),
+                style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                  color: AppPalette.primary,
+                  fontFeatures: const [ui.FontFeature.tabularFigures()],
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          if (visibleLogs.isEmpty)
+            Text(
+              'No sessions logged yet.',
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: AppPalette.textSecondary),
+            )
+          else
+            for (final log in visibleLogs) ...[
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 5),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        _formatHistoryDate(log.date),
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: AppPalette.textSecondary,
+                        ),
+                      ),
+                    ),
+                    Text(
+                      '${_formatCompactDuration(Duration(seconds: log.durationSeconds))} | ${log.averageBpm} BPM',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: AppPalette.textPrimary,
+                        fontFeatures: const [ui.FontFeature.tabularFigures()],
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+        ],
+      ),
+    );
+  }
+}
+
+String _formatCompactDuration(Duration duration) {
+  final totalSeconds = duration.inSeconds;
+  final hours = totalSeconds ~/ 3600;
+  final minutes = (totalSeconds % 3600) ~/ 60;
+  final seconds = totalSeconds % 60;
+  if (hours > 0) {
+    return '${hours}h ${minutes.toString().padLeft(2, '0')}m';
+  }
+  if (minutes > 0) {
+    return '${minutes}m ${seconds.toString().padLeft(2, '0')}s';
+  }
+  return '${seconds}s';
+}
+
+String _formatHistoryDate(DateTime date) {
+  final month = date.month.toString().padLeft(2, '0');
+  final day = date.day.toString().padLeft(2, '0');
+  final hour = date.hour.toString().padLeft(2, '0');
+  final minute = date.minute.toString().padLeft(2, '0');
+  return '$month/$day $hour:$minute';
 }
 
 class _SettingsChoiceChip extends StatelessWidget {
@@ -1859,21 +3791,19 @@ class _SettingsChoiceChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final accent = color ?? const Color(0xFF19F0C1);
+    final accent = color ?? AppPalette.primary;
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(18),
+      borderRadius: BorderRadius.circular(8),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 160),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         decoration: BoxDecoration(
           color: selected
-              ? accent.withValues(alpha: 0.18)
-              : Colors.white.withValues(alpha: 0.04),
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(
-            color: selected ? accent : Colors.white.withValues(alpha: 0.08),
-          ),
+              ? accent.withValues(alpha: 0.14)
+              : AppPalette.surfaceVariant,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: selected ? accent : AppPalette.border),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
@@ -1882,14 +3812,14 @@ class _SettingsChoiceChip extends StatelessWidget {
               Icon(
                 icon,
                 size: 16,
-                color: selected ? accent : Colors.white.withValues(alpha: 0.74),
+                color: selected ? accent : AppPalette.textSecondary,
               ),
               const SizedBox(width: 8),
             ],
             Text(
               label,
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: selected ? accent : Colors.white.withValues(alpha: 0.78),
+                color: selected ? accent : AppPalette.textPrimary,
                 fontWeight: FontWeight.w700,
               ),
             ),
@@ -1900,29 +3830,9 @@ class _SettingsChoiceChip extends StatelessWidget {
   }
 }
 
-class _GlowBlob extends StatelessWidget {
-  const _GlowBlob({required this.color, required this.size});
-
-  final Color color;
-  final double size;
-
-  @override
-  Widget build(BuildContext context) {
-    return IgnorePointer(
-      child: Container(
-        width: size,
-        height: size,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          gradient: RadialGradient(colors: [color, Colors.transparent]),
-        ),
-      ),
-    );
-  }
-}
-
 enum TapTempoState { primed, collecting, locked, outlier }
 
+/// Tap Tempo 的一次计算结果。
 class TapTempoUpdate {
   const TapTempoUpdate({
     required this.state,
@@ -1935,6 +3845,8 @@ class TapTempoUpdate {
   final int? bpm;
 }
 
+/// 纯 Dart Tap Tempo 算法，便于 widget_test 直接验证。
+/// 负责超时重置、异常间隔剔除、滑动平均和快速变速适配。
 class TapTempoTracker {
   TapTempoTracker({
     required this.windowSize,
@@ -2056,20 +3968,100 @@ extension on List<int> {
   }
 }
 
+/// 拍号模型。noteValue 是分母，例如 6/8 的 noteValue 为 8。
 class TimeSignature {
   const TimeSignature({
     required this.label,
     required this.beatsPerBar,
     required this.caption,
+    this.noteValue = 4,
   });
 
   final String label;
   final int beatsPerBar;
   final String caption;
+  final int noteValue;
+
+  @override
+  bool operator ==(Object other) {
+    return other is TimeSignature &&
+        other.beatsPerBar == beatsPerBar &&
+        other.noteValue == noteValue &&
+        other.label == label;
+  }
+
+  @override
+  int get hashCode => Object.hash(label, beatsPerBar, noteValue);
 }
 
-const int kMinBpm = 30;
-const int kMaxBpm = 240;
+/// 单拍类型。token 会传给 Android 原生层，Rest 代表整拍静音。
+enum BeatType {
+  accent('accent', 'Accent', 'A', AppPalette.secondary, 56),
+  secondary('secondary', 'Secondary', 'S', AppPalette.primary, 42),
+  light('light', 'Light', 'L', Color(0xFF1F7A7A), 28),
+  rest('rest', 'Rest', 'R', Color(0xFF2A2F35), 20);
+
+  const BeatType(
+    this.token,
+    this.label,
+    this.shortLabel,
+    this.color,
+    this.barHeight,
+  );
+
+  final String token;
+  final String label;
+  final String shortLabel;
+  final Color color;
+  final double barHeight;
+
+  BeatType get next {
+    return switch (this) {
+      BeatType.light => BeatType.secondary,
+      BeatType.secondary => BeatType.accent,
+      BeatType.accent => BeatType.rest,
+      BeatType.rest => BeatType.light,
+    };
+  }
+
+  static BeatType fromToken(String token) {
+    for (final type in values) {
+      if (type.token == token) {
+        return type;
+      }
+    }
+    return BeatType.light;
+  }
+}
+
+enum SubdivisionType {
+  quarter(0, 'Quarter notes', '♩'),
+  eighth(1, 'Eighth notes', '♪'),
+  sixteenth(2, 'Sixteenth notes', '♬'),
+  triplets(3, 'Triplets', '♪3'),
+  frontEightBackSixteen(4, 'Eighth + two sixteenths', '♪♬'),
+  backEightFrontSixteen(5, 'Two sixteenths + eighth', '♬♪'),
+  dotted(6, 'Dotted eighth + sixteenth', '♪.');
+
+  const SubdivisionType(this.id, this.label, this.notation);
+
+  final int id;
+  final String label;
+  final String notation;
+
+  static SubdivisionType fromId(int id) {
+    for (final subdivision in values) {
+      if (subdivision.id == id) {
+        return subdivision;
+      }
+    }
+    return SubdivisionType.quarter;
+  }
+}
+
+const int kMinBpm = 10;
+const int kMaxBpm = 400;
+const List<int> kNoteValues = [1, 2, 4, 8, 16, 32];
 
 const List<TimeSignature> kTimeSignatures = [
   TimeSignature(label: '2/4', beatsPerBar: 2, caption: 'March feel'),
@@ -2078,6 +4070,99 @@ const List<TimeSignature> kTimeSignatures = [
   TimeSignature(label: '5/4', beatsPerBar: 5, caption: 'Odd-meter drive'),
   TimeSignature(label: '6/8', beatsPerBar: 6, caption: 'Compound groove'),
 ];
+
+List<BeatType> _defaultBeatPattern(int beatsPerBar) {
+  return [
+    for (var index = 0; index < beatsPerBar; index++)
+      index == 0 ? BeatType.accent : BeatType.light,
+  ];
+}
+
+List<BeatType> _resizeBeatPattern(List<BeatType> current, int beatsPerBar) {
+  final nextLength = beatsPerBar.clamp(1, 16).toInt();
+  if (current.length == nextLength) {
+    return current;
+  }
+  if (current.length > nextLength) {
+    return current.take(nextLength).toList();
+  }
+  return [
+    ...current,
+    for (var index = current.length; index < nextLength; index++)
+      index == 0 ? BeatType.accent : BeatType.light,
+  ];
+}
+
+List<BeatType> _beatPatternFromTokens(List<String> tokens, int beatsPerBar) {
+  if (tokens.isEmpty) {
+    return _defaultBeatPattern(beatsPerBar);
+  }
+  return _resizeBeatPattern(
+    tokens.map(BeatType.fromToken).toList(),
+    beatsPerBar,
+  );
+}
+
+_ParsedSignature? _parseSignatureLabel(String label) {
+  final match = RegExp(r'^(\d{1,2})/(\d{1,2})$').firstMatch(label.trim());
+  if (match == null) {
+    return null;
+  }
+  final beats = int.tryParse(match.group(1)!);
+  final noteValue = int.tryParse(match.group(2)!);
+  if (beats == null || noteValue == null) {
+    return null;
+  }
+  return _ParsedSignature(
+    label: '$beats/$noteValue',
+    beatsPerBar: beats.clamp(1, 16).toInt(),
+    noteValue: noteValue.clamp(1, 32).toInt(),
+  );
+}
+
+class _ParsedSignature {
+  const _ParsedSignature({
+    required this.label,
+    required this.beatsPerBar,
+    required this.noteValue,
+  });
+
+  final String label;
+  final int beatsPerBar;
+  final int noteValue;
+}
+
+String _formatTimerDuration(Duration duration) {
+  final totalSeconds = duration.inSeconds;
+  final minutes = totalSeconds ~/ 60;
+  final seconds = totalSeconds % 60;
+  return '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
+}
+
+String _tempoMarking(int bpm) {
+  if (bpm < 40) {
+    return 'Grave';
+  }
+  if (bpm < 60) {
+    return 'Largo';
+  }
+  if (bpm < 76) {
+    return 'Adagio';
+  }
+  if (bpm < 108) {
+    return 'Andante';
+  }
+  if (bpm < 120) {
+    return 'Moderato';
+  }
+  if (bpm < 168) {
+    return 'Allegro';
+  }
+  if (bpm < 200) {
+    return 'Presto';
+  }
+  return 'Prestissimo';
+}
 
 enum VoiceMode {
   off('off', 'Off', 'Clicks only'),
@@ -2100,33 +4185,34 @@ enum VoiceMode {
   }
 }
 
+/// 当前内置 SoundPool 音色 token。
 enum SoundProfile {
   accent(
     'accent',
     'Accent',
     'Sharper lead click for the downbeat',
-    Color(0xFF19F0C1),
+    AppPalette.secondary,
     Icons.flash_on_rounded,
   ),
   mechanical(
     'mechanical',
     'Mechanical',
     'Hard and crisp with strong attack',
-    Color(0xFFFFC857),
+    AppPalette.secondary,
     Icons.precision_manufacturing_rounded,
   ),
   electronic(
     'electronic',
     'Electronic',
     'Bright electronic pulse for EDM practice',
-    Color(0xFF5ED7FF),
+    AppPalette.primary,
     Icons.graphic_eq_rounded,
   ),
   wood(
     'wood',
     'Wood',
     'Warm wooden tap for daily sessions',
-    Color(0xFFFF8A65),
+    Color(0xFFD9A06B),
     Icons.music_note_rounded,
   );
 
@@ -2154,34 +4240,44 @@ enum SoundProfile {
   }
 }
 
+/// Flutter -> Android 的完整节拍配置载荷。
 class MetronomeConfig {
   const MetronomeConfig({
     required this.bpm,
     required this.beatsPerBar,
+    required this.noteValue,
     required this.timeSignature,
     required this.accentSound,
     required this.regularSound,
     required this.vocalMode,
     required this.accentHaptics,
+    required this.subdivisionType,
+    required this.beatTypes,
   });
 
   final int bpm;
   final int beatsPerBar;
+  final int noteValue;
   final String timeSignature;
   final String accentSound;
   final String regularSound;
   final String vocalMode;
   final bool accentHaptics;
+  final int subdivisionType;
+  final List<String> beatTypes;
 
   Map<String, dynamic> toMap() {
     return {
       'bpm': bpm,
       'beatsPerBar': beatsPerBar,
+      'noteValue': noteValue,
       'timeSignature': timeSignature,
       'accentSound': accentSound,
       'regularSound': regularSound,
       'vocalMode': vocalMode,
       'accentHaptics': accentHaptics,
+      'subdivisionType': subdivisionType,
+      'beatTypes': beatTypes,
     };
   }
 
@@ -2189,15 +4285,23 @@ class MetronomeConfig {
     return MetronomeConfig(
       bpm: (map['bpm'] as int?) ?? 120,
       beatsPerBar: (map['beatsPerBar'] as int?) ?? 4,
+      noteValue: (map['noteValue'] as int?) ?? 4,
       timeSignature: (map['timeSignature'] as String?) ?? '4/4',
       accentSound: (map['accentSound'] as String?) ?? SoundProfile.accent.token,
       regularSound: (map['regularSound'] as String?) ?? SoundProfile.wood.token,
       vocalMode: (map['vocalMode'] as String?) ?? VoiceMode.off.token,
       accentHaptics: (map['accentHaptics'] as bool?) ?? true,
+      subdivisionType: (map['subdivisionType'] as int?) ?? 0,
+      beatTypes:
+          (map['beatTypes'] as List<dynamic>?)
+              ?.map((value) => value.toString())
+              .toList() ??
+          const [],
     );
   }
 }
 
+/// Android getStatus 返回的运行状态快照。
 class MetronomeStatus {
   const MetronomeStatus({
     required this.isRunning,
@@ -2225,26 +4329,37 @@ class MetronomeStatus {
   }
 }
 
+/// Android EventChannel 推送的每次节拍事件。
 class BeatEvent {
   const BeatEvent({
     required this.beatIndex,
     required this.beatsPerBar,
     required this.cycleCount,
+    required this.subdivisionIndex,
+    required this.subdivisionSlots,
+    required this.isSilent,
   });
 
   final int beatIndex;
   final int beatsPerBar;
   final int cycleCount;
+  final int subdivisionIndex;
+  final int subdivisionSlots;
+  final bool isSilent;
 
   factory BeatEvent.fromMap(Map<dynamic, dynamic> map) {
     return BeatEvent(
       beatIndex: (map['beatIndex'] as int?) ?? 0,
       beatsPerBar: (map['beatsPerBar'] as int?) ?? 4,
       cycleCount: (map['cycleCount'] as int?) ?? 0,
+      subdivisionIndex: (map['subdivisionIndex'] as int?) ?? 0,
+      subdivisionSlots: (map['subdivisionSlots'] as int?) ?? 1,
+      isSilent: (map['isSilent'] as bool?) ?? false,
     );
   }
 }
 
+/// MethodChannel/EventChannel 的薄封装，隔离 Flutter UI 和 Android 平台调用。
 class MetronomeBridge {
   const MetronomeBridge();
 
