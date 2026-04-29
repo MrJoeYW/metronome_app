@@ -37,6 +37,10 @@ flutter build apk
 ---
 
 好吧怕你迷路打包好了，直接下载就行了，but只有安卓版
-https://github.com/MrJoeYW/metronome_app/releases/tag/v1.0.0
+https://github.com/MrJoeYW/metronome_app/releases/tag/2.0.0
 
 尽情享受纯粹的练琴时光吧！
+
+如果你觉得这个软件对你练习有帮助，欢迎打赏
+
+![alt text](assets\images\admire.jpg)
