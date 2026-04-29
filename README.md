@@ -43,4 +43,4 @@ https://github.com/MrJoeYW/metronome_app/releases/tag/2.0.0
 
 如果你觉得这个软件对你练习有帮助，欢迎打赏
 
-![alt text](assets\images\admire.jpg)
+![alt text](assets/images/admire.jpg)
