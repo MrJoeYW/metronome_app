@@ -2,6 +2,7 @@ package com.example.metronome_app
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.os.SystemClock
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import io.flutter.embedding.android.FlutterActivity
@@ -58,6 +59,12 @@ class MainActivity : FlutterActivity() {
 
                 "requestMicrophonePermission" -> {
                     requestMicrophonePermission(result)
+                }
+
+                // 返回当前 elapsedRealtimeNanos，供 Flutter 把 Tap 对拍时间戳
+                // 映射到原生调度时钟域，实现相位对齐。
+                "syncClock" -> {
+                    result.success(SystemClock.elapsedRealtimeNanos())
                 }
 
                 else -> result.notImplemented()

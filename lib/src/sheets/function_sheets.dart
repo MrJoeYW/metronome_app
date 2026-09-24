@@ -86,13 +86,6 @@ class _TimeSignatureSheetState extends State<TimeSignatureSheet> {
                 ),
             ],
           ),
-          const SizedBox(height: 18),
-          _PreviewPanel(
-            icon: Icons.grid_4x4_rounded,
-            title: 'Current meter',
-            value: '$_beats/$_noteValue',
-            accent: AppPalette.secondary,
-          ),
         ],
       ),
     );
@@ -177,15 +170,15 @@ class _SoundPresetSheetState extends State<SoundPresetSheet> {
   @override
   Widget build(BuildContext context) {
     return _FunctionSheetFrame(
-      title: 'Tone',
+      title: '节拍声音',
       scrollController: widget.scrollController,
-      actionLabel: 'Done',
+      actionLabel: '完成',
       actionIcon: Icons.check_rounded,
       onAction: () => Navigator.of(context).pop(),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _SettingsSectionTitle(title: 'Preset'),
+          _SettingsSectionTitle(title: '常规音色'),
           const SizedBox(height: 10),
           Wrap(
             spacing: 10,
@@ -193,7 +186,7 @@ class _SoundPresetSheetState extends State<SoundPresetSheet> {
             children: [
               for (final sound in SoundProfile.values)
                 _SettingsChoiceChip(
-                  label: sound.label,
+                  label: sound.zhLabel,
                   icon: sound.icon,
                   color: sound.color,
                   selected: _regularSound == sound,
@@ -207,7 +200,7 @@ class _SoundPresetSheetState extends State<SoundPresetSheet> {
             ],
           ),
           const SizedBox(height: 18),
-          _SettingsSectionTitle(title: 'Accent layer'),
+          _SettingsSectionTitle(title: '重拍音色'),
           const SizedBox(height: 10),
           Wrap(
             spacing: 10,
@@ -215,7 +208,7 @@ class _SoundPresetSheetState extends State<SoundPresetSheet> {
             children: [
               for (final sound in SoundProfile.values)
                 _SettingsChoiceChip(
-                  label: sound.label,
+                  label: sound.zhLabel,
                   icon: sound.icon,
                   color: sound.color,
                   selected: _accentSound == sound,
@@ -229,7 +222,7 @@ class _SoundPresetSheetState extends State<SoundPresetSheet> {
             ],
           ),
           const SizedBox(height: 18),
-          _SettingsSectionTitle(title: 'Voice counting'),
+          _SettingsSectionTitle(title: '人声数拍'),
           const SizedBox(height: 10),
           Wrap(
             spacing: 10,
@@ -237,7 +230,7 @@ class _SoundPresetSheetState extends State<SoundPresetSheet> {
             children: [
               for (final mode in VoiceMode.values)
                 _SettingsChoiceChip(
-                  label: mode.label,
+                  label: mode.zhLabel,
                   selected: _voiceMode == mode,
                   onTap: () {
                     setState(() {
@@ -256,7 +249,7 @@ class _SoundPresetSheetState extends State<SoundPresetSheet> {
               border: Border.all(color: AppPalette.border),
             ),
             child: SwitchListTile(
-              title: const Text('Accent haptic pulse'),
+              title: const Text('重拍振动'),
               value: _accentHaptics,
               activeThumbColor: AppPalette.primary,
               activeTrackColor: AppPalette.primary.withValues(alpha: 0.28),
@@ -271,9 +264,9 @@ class _SoundPresetSheetState extends State<SoundPresetSheet> {
           const SizedBox(height: 18),
           _PreviewPanel(
             icon: Icons.volume_up_rounded,
-            title: 'Audition',
-            value: 'UI reserved',
-            subtitle: 'Real source logic is paused',
+            title: '试听',
+            value: '界面预留',
+            subtitle: '真实音源逻辑暂停',
             accent: AppPalette.primary,
           ),
         ],
@@ -317,9 +310,9 @@ class _TunerSheetState extends State<TunerSheet> {
   @override
   Widget build(BuildContext context) {
     return _FunctionSheetFrame(
-      title: 'Tuner',
+      title: '调音器',
       scrollController: widget.scrollController,
-      actionLabel: 'Done',
+      actionLabel: '完成',
       actionIcon: Icons.check_rounded,
       onAction: () => Navigator.of(context).pop(),
       child: Column(
@@ -333,7 +326,7 @@ class _TunerSheetState extends State<TunerSheet> {
           const SizedBox(height: 18),
           _PreviewPanel(
             icon: Icons.info_outline_rounded,
-            title: 'Input',
+            title: '输入状态',
             value: _event.status.label,
             subtitle: 'A4 = 440Hz',
             accent: const Color(0xFF7AD7A8),
@@ -467,9 +460,9 @@ class _TimerSheetState extends State<TimerSheet> {
   @override
   Widget build(BuildContext context) {
     return _FunctionSheetFrame(
-      title: 'Timer',
+      title: '定时',
       scrollController: widget.scrollController,
-      actionLabel: 'Apply',
+      actionLabel: '应用',
       actionIcon: Icons.check_rounded,
       onAction: _applyTimer,
       child: Column(
@@ -483,8 +476,8 @@ class _TimerSheetState extends State<TimerSheet> {
                   fixedSize: WidgetStatePropertyAll(Size(132, 44)),
                 ),
                 segments: const [
-                  ButtonSegment(value: false, label: Text('Off')),
-                  ButtonSegment(value: true, label: Text('Countdown')),
+                  ButtonSegment(value: false, label: Text('关闭')),
+                  ButtonSegment(value: true, label: Text('倒计时')),
                 ],
                 selected: {_enabled},
                 onSelectionChanged: (values) {
@@ -496,13 +489,13 @@ class _TimerSheetState extends State<TimerSheet> {
             ),
           ),
           const SizedBox(height: 18),
-          _SettingsSectionTitle(title: 'Duration'),
+          _SettingsSectionTitle(title: '时长'),
           const SizedBox(height: 10),
           FiveAcrossOptions(
             children: [
               for (final value in const [1, 3, 5, 10, 15])
                 CompactOptionButton(
-                  label: '${value}m',
+                  label: '$value分',
                   selected: _minutes == value,
                   onTap: () => _selectPresetMinutes(value),
                 ),
@@ -522,7 +515,7 @@ class _TimerSheetState extends State<TimerSheet> {
           const SizedBox(height: 18),
           _PreviewPanel(
             icon: Icons.timer_rounded,
-            title: 'Remaining',
+            title: '剩余',
             value: _enabled
                 ? _formatTimerDuration(Duration(minutes: _minutes))
                 : '--:--',
@@ -710,10 +703,10 @@ class _TunerDisplay extends StatelessWidget {
     final frequencyText = displayReading == null
         ? '-- Hz'
         : '${displayReading.frequency.toStringAsFixed(1)} Hz';
-    final centsText = displayReading?.centsText ?? '0 cents';
+    final centsText = displayReading?.centsText ?? '0 音分';
     final helperText = switch (event.status) {
-      TunerStatus.noSignal => 'Waiting for a stable single note',
-      TunerStatus.listening || TunerStatus.idle => 'Play a single note',
+      TunerStatus.noSignal => '等待稳定的单音',
+      TunerStatus.listening || TunerStatus.idle => '请弹奏单音',
       _ => event.status.label,
     };
 
@@ -735,7 +728,7 @@ class _TunerDisplay extends StatelessWidget {
             ),
             const SizedBox(height: 12),
             Text(
-              'Microphone permission needed',
+              '需要麦克风权限',
               style: Theme.of(context).textTheme.titleLarge?.copyWith(
                 color: AppPalette.textPrimary,
                 fontWeight: FontWeight.w900,
@@ -745,7 +738,7 @@ class _TunerDisplay extends StatelessWidget {
             FilledButton.icon(
               onPressed: isRequestingPermission ? null : onRequestPermission,
               icon: const Icon(Icons.mic_rounded),
-              label: Text(isRequestingPermission ? 'Requesting' : 'Enable mic'),
+              label: Text(isRequestingPermission ? '请求中' : '开启麦克风'),
             ),
           ] else if (event.status == TunerStatus.error) ...[
             const Icon(
@@ -755,7 +748,7 @@ class _TunerDisplay extends StatelessWidget {
             ),
             const SizedBox(height: 12),
             Text(
-              'Tuner unavailable',
+              '调音器不可用',
               style: Theme.of(context).textTheme.titleLarge?.copyWith(
                 color: AppPalette.textPrimary,
                 fontWeight: FontWeight.w900,
@@ -763,7 +756,7 @@ class _TunerDisplay extends StatelessWidget {
             ),
             const SizedBox(height: 6),
             Text(
-              'Check microphone access and try again',
+              '请检查麦克风权限后重试',
               textAlign: TextAlign.center,
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                 color: AppPalette.textSecondary,
@@ -879,12 +872,12 @@ class _TunerNeedle extends StatelessWidget {
               Positioned(
                 left: 0,
                 bottom: 0,
-                child: _TunerScaleLabel(label: 'Flat'),
+                child: _TunerScaleLabel(label: '偏低'),
               ),
               Positioned(
                 right: 0,
                 bottom: 0,
-                child: _TunerScaleLabel(label: 'Sharp'),
+                child: _TunerScaleLabel(label: '偏高'),
               ),
             ],
           );
@@ -1066,7 +1059,7 @@ class MinuteWheelPicker extends StatelessWidget {
       child: Stack(
         children: [
           _LabeledCupertinoWheel(
-            label: 'Minutes',
+            label: '分钟',
             accent: const Color(0xFFFF7A90),
             controller: controller,
             itemExtent: itemExtent,

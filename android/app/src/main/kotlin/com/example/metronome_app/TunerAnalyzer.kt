@@ -5,6 +5,7 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.content.pm.PackageManager
 import android.media.AudioFormat
+import android.media.AudioManager
 import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.os.Handler
@@ -56,7 +57,7 @@ class TunerAnalyzer(
 
         val bufferSize = maxOf(minBuffer * 2, ANALYSIS_SIZE * 2)
         audioRecord = AudioRecord(
-            MediaRecorder.AudioSource.MIC,
+            preferredAudioSource(),
             SAMPLE_RATE,
             AudioFormat.CHANNEL_IN_MONO,
             AudioFormat.ENCODING_PCM_16BIT,
@@ -133,9 +134,15 @@ class TunerAnalyzer(
 
     private fun analyze(samples: ShortArray, length: Int): PitchResult? {
         val values = DoubleArray(length)
+        var mean = 0.0
+        for (i in 0 until length) {
+            mean += samples[i] / 32768.0
+        }
+        mean /= length
+
         var sumSquares = 0.0
         for (i in 0 until length) {
-            val value = samples[i] / 32768.0
+            val value = samples[i] / 32768.0 - mean
             values[i] = value
             sumSquares += value * value
         }
@@ -175,11 +182,31 @@ class TunerAnalyzer(
             }
         }
 
-        if (bestLag <= 0 || bestCorrelation < MIN_CLARITY) {
+        if (bestLag <= 0) {
             return null
         }
 
-        val refinedLag = refineLag(values, length, bestLag)
+        // 自相关天生偏向最小 lag（高频），先做一次更严格的清晰度校验。
+        // 若峰值不够强，再按清晰度 > 0.5 的最大 lag 取音高，降低八度误判。
+        var chosenLag = bestLag
+        if (bestCorrelation < MIN_CLARITY) {
+            var fallbackLag = -1
+            var fallbackCorrelation = 0.0
+            for (lag in minLag..maxLag) {
+                val normalized = normalizedCorrelationAt(values, length, lag)
+                if (normalized >= LOW_CLARITY && normalized >= fallbackCorrelation) {
+                    fallbackCorrelation = normalized
+                    fallbackLag = lag
+                }
+            }
+            if (fallbackLag <= 0) {
+                return null
+            }
+            chosenLag = fallbackLag
+            bestCorrelation = fallbackCorrelation
+        }
+
+        val refinedLag = refineLag(values, length, chosenLag)
         val frequency = SAMPLE_RATE / refinedLag
         if (frequency < MIN_FREQUENCY || frequency > MAX_FREQUENCY) {
             return null
@@ -190,6 +217,29 @@ class TunerAnalyzer(
             clarity = bestCorrelation,
             rms = rms,
         )
+    }
+
+    private fun normalizedCorrelationAt(
+        values: DoubleArray,
+        length: Int,
+        lag: Int,
+    ): Double {
+        var correlation = 0.0
+        var energyA = 0.0
+        var energyB = 0.0
+        val limit = length - lag
+        for (i in 0 until limit) {
+            val a = values[i]
+            val b = values[i + lag]
+            correlation += a * b
+            energyA += a * a
+            energyB += b * b
+        }
+        val denominator = sqrt(energyA * energyB)
+        if (denominator <= 0.0) {
+            return 0.0
+        }
+        return correlation / denominator
     }
 
     private fun refineLag(values: DoubleArray, length: Int, lag: Int): Double {
@@ -228,14 +278,32 @@ class TunerAnalyzer(
         ) == PackageManager.PERMISSION_GRANTED
     }
 
+    private fun preferredAudioSource(): Int {
+        return if (hasUnprocessedAudioSource()) {
+            MediaRecorder.AudioSource.UNPROCESSED
+        } else {
+            MediaRecorder.AudioSource.MIC
+        }
+    }
+
+    private fun hasUnprocessedAudioSource(): Boolean {
+        val audioManager = appContext.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+            ?: return false
+        return audioManager.getProperty(PROPERTY_SUPPORT_AUDIO_SOURCE_UNPROCESSED)?.toBoolean()
+            ?: false
+    }
+
     companion object {
         private const val SAMPLE_RATE = 44100
         private const val ANALYSIS_SIZE = 4096
         private const val ANALYSIS_INTERVAL_MS = 70L
         private const val MIN_FREQUENCY = 60
         private const val MAX_FREQUENCY = 1200
-        private const val MIN_RMS = 0.012
-        private const val MIN_CLARITY = 0.62
+        private const val MIN_RMS = 0.006
+        private const val MIN_CLARITY = 0.55
+        private const val LOW_CLARITY = 0.50
+        private const val PROPERTY_SUPPORT_AUDIO_SOURCE_UNPROCESSED =
+            "android.media.property.SUPPORT_AUDIO_SOURCE_UNPROCESSED"
     }
 }
 

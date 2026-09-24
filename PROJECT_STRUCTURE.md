@@ -275,3 +275,25 @@ kotlin.caching.enabled=false
 - `lib/src/models/metronome_models.dart`: `BeatRhythmType` is aligned one-to-one with the ten subdivision assets, each carrying an `assetPath` plus slot-count playback behavior. Old removed rhythm tokens are mapped to the closest current asset-backed type when loading persisted configs.
 - `lib/src/widgets/beat_pattern.dart`: rhythm glyph rendering now prefers the local WebP assets with color filtering, falling back to the custom painter only if an asset fails to load. Rest beat cells are taller so empty beats no longer overflow.
 - `lib/src/pages/metronome_main_page.dart` and `lib/src/widgets/transport_and_presets.dart`: the main scaffold no longer resizes under the keyboard, and the save-configuration dialog accounts for keyboard `viewInsets` with scrollable content, preventing bottom overflow when the text field auto-focuses.
+
+## 2026-04-26 Landscape Calendar, Meter and Tuner Fixes
+
+- `lib/src/pages/settings_page.dart`: the `练琴日历` month area is now wrapped in a `Center` + `ConstrainedBox(maxWidth: 460)` and its grid height is computed from the actual cell width (`LayoutBuilder`), instead of a fixed `258` height. In landscape the calendar no longer clips its bottom rows and every date cell stays tappable.
+- `lib/src/models/metronome_models.dart`: the built-in `6/8` quick meter now carries `noteValue: 8`, so tapping it moves the Value wheel to `8`. Added `SoundProfile.zhLabel` and `VoiceMode.zhLabel` Chinese labels; `TunerReading.centsText` now reports `音分`.
+- `lib/src/sheets/function_sheets.dart`: removed the redundant `Current meter` preview panel from the `Meter` sheet (wheels and quick meters already reflect the selection). Localized the `节拍声音`, `调音器` and `定时` sheets to Chinese, including section titles, action buttons, wheel labels, helper text and tuner status panels.
+- `lib/src/widgets/top_function_bar.dart` / `lib/src/pages/metronome_main_page.dart`: top function bar now shows `拍号 / 音色 / 调音器 / 定时`; the tone button shows the Chinese sound label.
+- `android/app/src/main/kotlin/com/example/metronome_app/TunerAnalyzer.kt`: tuner sensitivity optimization. Uses `AudioSource.UNPROCESSED` when the device reports support (falling back to `MIC`) to bypass AGC/noise-suppression coloring; removes the DC offset before autocorrelation; lowers `MIN_RMS` to `0.006` and `MIN_CLARITY` to `0.55`; adds a `LOW_CLARITY` (0.50) octave-guard that picks the strongest normalized-correlation lag when the strict peak is weak. Emission rate and the Flutter-side UI contract are unchanged.
+
+## 2026-04-26 Tap-Align Phase Sync
+
+背景：后台放歌时，用户希望节拍器与歌曲鼓点同拍，但原先只能反复 Start 去蒙一个对齐时机。
+
+- `lib/src/models/metronome_models.dart`: `MetronomeConfig` 新增可空 `phaseAnchorNanos`（原生 `elapsedRealtimeNanos` 时钟域），仅在 Start 时下发一次；`toMap` 为空时不写该键，`fromMap` 兼容缺省。`MetronomeBridge` 新增 `syncClock()`，通过 MethodChannel `syncClock` 取原生当前 `elapsedRealtimeNanos`，并记录配对的 Flutter 本地时间戳，用于两个时钟域的换算。
+- `android/app/src/main/kotlin/com/example/metronome_app/MainActivity.kt`: `metronome/control` 新增 `syncClock`，返回 `SystemClock.elapsedRealtimeNanos()`。
+- `android/.../MetronomeModels.kt`: 配置模型、`toMap`、`fromIntent` 与 `EXTRA_PHASE_ANCHOR_NANOS` Intent 字段都保留 `phaseAnchorNanos`。
+- `android/.../MetronomeEngine.kt`: `runLoop()` 启动时读取 `phaseAnchorNanos`，`anchorTickNanos()` 把锚点（用户跟随歌曲的最后一次 tap）向后推一个节拍周期得到首个 tick；锚点若已过去则按周期滚动到当前之后，若超过两拍才轮到则判定失效回退即时起算，保证相位对齐且不产生大幅漂移。
+- `lib/src/widgets/bpm_dial.dart`: 圆盘中心按钮新增 `onLongPress`，长按在普通/对齐两种模式间**直接切换、不弹窗**。对齐模式下中心区改为 Tap 对拍：点击跟随歌曲拍点；中心提示由 `TAP TEMPO` 变为“跟歌点拍 / 已对齐 N”，边框与文字在就绪时转绿。`_BpmDialWithPresetActions` 透传 `alignMode / alignReady / onToggleAlignMode / onAlignTap`。
+- `lib/src/pages/metronome_main_page.dart`: 新增对齐模式状态 `_alignMode`、`_lastAlignTapAt`、对齐专用 `TapTempoTracker` 与 `_clockSync`。`_toggleAlignMode` 长按切换并刷新时钟同步；`_handleAlignTap` 记录每次 tap 时间并同步 BPM；`_resolvePhaseAnchor` 在 Start 时把最后一次 tap 映射到原生时钟域，超过 2 秒有效期返回 null 回退即时起算。所有播放入口仍走同一 `_setPlayback`。
+
+后续可继续做的：调音器灵敏度优化本轮未改动；节拍器与后台音乐共存依赖系统多应用发声策略，未改音频焦点。
+

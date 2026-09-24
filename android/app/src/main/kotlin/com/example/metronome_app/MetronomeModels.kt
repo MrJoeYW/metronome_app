@@ -15,6 +15,7 @@ const val EXTRA_ACCENT_HAPTICS = "extra_accent_haptics"
 const val EXTRA_SUBDIVISION_TYPE = "extra_subdivision_type"
 const val EXTRA_BEAT_TYPES = "extra_beat_types"
 const val EXTRA_BEAT_RHYTHM_TYPES = "extra_beat_rhythm_types"
+const val EXTRA_PHASE_ANCHOR_NANOS = "extra_phase_anchor_nanos"
 
 /**
  * Flutter 与 Android 服务共享的节拍配置模型。
@@ -34,21 +35,23 @@ data class MetronomeConfig(
     val subdivisionType: Int = 0,
     val beatTypes: List<String> = listOf("accent", "light", "light", "light"),
     val beatRhythmTypes: List<String> = listOf("quarter", "quarter", "quarter", "quarter"),
+    val phaseAnchorNanos: Long? = null,
 ) {
     /** 转成 MethodChannel 可返回给 Flutter 的 Map。 */
     fun toMap(): Map<String, Any> {
-        return mapOf(
-            "bpm" to bpm,
-            "beatsPerBar" to beatsPerBar,
-            "timeSignature" to timeSignature,
-            "accentSound" to accentSound,
-            "regularSound" to regularSound,
-            "vocalMode" to vocalMode,
-            "accentHaptics" to accentHaptics,
-            "subdivisionType" to subdivisionType,
-            "beatTypes" to beatTypes,
-            "beatRhythmTypes" to beatRhythmTypes,
-        )
+        return buildMap {
+            put("bpm", bpm)
+            put("beatsPerBar", beatsPerBar)
+            put("timeSignature", timeSignature)
+            put("accentSound", accentSound)
+            put("regularSound", regularSound)
+            put("vocalMode", vocalMode)
+            put("accentHaptics", accentHaptics)
+            put("subdivisionType", subdivisionType)
+            put("beatTypes", beatTypes)
+            put("beatRhythmTypes", beatRhythmTypes)
+            phaseAnchorNanos?.let { put("phaseAnchorNanos", it) }
+        }
     }
 
     /** 写入 Service Intent，供前台服务 start/configure action 读取。 */
@@ -64,6 +67,7 @@ data class MetronomeConfig(
             putExtra(EXTRA_SUBDIVISION_TYPE, subdivisionType)
             putStringArrayListExtra(EXTRA_BEAT_TYPES, ArrayList(beatTypes))
             putStringArrayListExtra(EXTRA_BEAT_RHYTHM_TYPES, ArrayList(beatRhythmTypes))
+            phaseAnchorNanos?.let { putExtra(EXTRA_PHASE_ANCHOR_NANOS, it) }
         }
     }
 
@@ -85,6 +89,7 @@ data class MetronomeConfig(
                 beatRhythmTypes = (raw?.get("beatRhythmTypes") as? List<*>)
                     ?.mapNotNull { it as? String }
                     ?: defaultBeatRhythmTypes((raw?.get("beatsPerBar") as? Number)?.toInt() ?: 4),
+                phaseAnchorNanos = (raw?.get("phaseAnchorNanos") as? Number)?.toLong(),
             )
         }
 
@@ -107,6 +112,11 @@ data class MetronomeConfig(
                     ?: defaultBeatTypes(intent.getIntExtra(EXTRA_BEATS_PER_BAR, 4)),
                 beatRhythmTypes = intent.getStringArrayListExtra(EXTRA_BEAT_RHYTHM_TYPES)
                     ?: defaultBeatRhythmTypes(intent.getIntExtra(EXTRA_BEATS_PER_BAR, 4)),
+                phaseAnchorNanos = if (intent.hasExtra(EXTRA_PHASE_ANCHOR_NANOS)) {
+                    intent.getLongExtra(EXTRA_PHASE_ANCHOR_NANOS, 0L).takeIf { it > 0L }
+                } else {
+                    null
+                },
             )
         }
 

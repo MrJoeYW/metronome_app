@@ -1,6 +1,7 @@
 part of '../../main.dart';
 
 /// BPM 圆盘：外圈拖动调速，中心 Tap Tempo，+/- 支持微调和长按连调。
+/// 中心区长按可在普通/对齐两种模式间直接切换。
 class BpmDial extends StatefulWidget {
   const BpmDial({
     super.key,
@@ -11,6 +12,10 @@ class BpmDial extends StatefulWidget {
     required this.size,
     required this.onChanged,
     required this.onTapTempo,
+    this.alignMode = false,
+    this.alignReady = false,
+    this.onToggleAlignMode,
+    this.onAlignTap,
   });
 
   final int bpm;
@@ -20,6 +25,10 @@ class BpmDial extends StatefulWidget {
   final double size;
   final ValueChanged<int> onChanged;
   final VoidCallback onTapTempo;
+  final bool alignMode;
+  final bool alignReady;
+  final VoidCallback? onToggleAlignMode;
+  final Future<void> Function()? onAlignTap;
 
   @override
   State<BpmDial> createState() => _BpmDialState();
@@ -113,6 +122,9 @@ class _BpmDialState extends State<BpmDial> with TickerProviderStateMixin {
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
               onTap: _handleCenterTap,
+              onLongPress: widget.onToggleAlignMode == null
+                  ? null
+                  : () => widget.onToggleAlignMode!(),
               onPanStart: (_) {},
               onPanUpdate: (_) {},
               onPanEnd: (_) {},
@@ -120,7 +132,14 @@ class _BpmDialState extends State<BpmDial> with TickerProviderStateMixin {
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   color: AppPalette.surface,
-                  border: Border.all(color: AppPalette.border),
+                  border: Border.all(
+                    color: widget.alignMode
+                        ? (widget.alignReady
+                              ? const Color(0xFF7AD7A8)
+                              : AppPalette.secondary)
+                        : AppPalette.border,
+                    width: widget.alignMode ? 2 : 1,
+                  ),
                   boxShadow: [
                     BoxShadow(
                       blurRadius: 14,
@@ -241,9 +260,13 @@ class _BpmDialState extends State<BpmDial> with TickerProviderStateMixin {
                                         color: AppPalette.surfaceVariant,
                                         borderRadius: BorderRadius.circular(8),
                                         border: Border.all(
-                                          color: AppPalette.primary.withValues(
-                                            alpha: 0.48,
-                                          ),
+                                          color: widget.alignMode
+                                              ? (widget.alignReady
+                                                    ? const Color(0xFF7AD7A8)
+                                                    : AppPalette.secondary)
+                                              : AppPalette.primary.withValues(
+                                                  alpha: 0.48,
+                                                ),
                                         ),
                                       ),
                                       child: FittedBox(
@@ -252,15 +275,27 @@ class _BpmDialState extends State<BpmDial> with TickerProviderStateMixin {
                                           mainAxisSize: MainAxisSize.min,
                                           children: [
                                             Icon(
-                                              Icons.touch_app_rounded,
+                                              widget.alignMode
+                                                  ? Icons.sync_rounded
+                                                  : Icons.touch_app_rounded,
                                               size: compactCenter ? 12 : 14,
-                                              color: AppPalette.primary,
+                                              color: widget.alignMode
+                                                  ? (widget.alignReady
+                                                        ? const Color(
+                                                            0xFF7AD7A8,
+                                                          )
+                                                        : AppPalette.secondary)
+                                                  : AppPalette.primary,
                                             ),
                                             SizedBox(
                                               width: compactCenter ? 4 : 6,
                                             ),
                                             Text(
-                                              'TAP TEMPO',
+                                              widget.alignMode
+                                                  ? (widget.alignReady
+                                                        ? '已对齐 ${widget.bpm}'
+                                                        : '跟歌点拍')
+                                                  : 'TAP TEMPO',
                                               style: Theme.of(context)
                                                   .textTheme
                                                   .labelSmall
@@ -268,7 +303,14 @@ class _BpmDialState extends State<BpmDial> with TickerProviderStateMixin {
                                                     fontSize: compactCenter
                                                         ? 10
                                                         : null,
-                                                    color: AppPalette.primary,
+                                                    color: widget.alignMode
+                                                        ? (widget.alignReady
+                                                              ? const Color(
+                                                                  0xFF7AD7A8,
+                                                                )
+                                                              : AppPalette
+                                                                    .secondary)
+                                                        : AppPalette.primary,
                                                     fontWeight: FontWeight.w800,
                                                     letterSpacing: 0,
                                                   ),
@@ -407,6 +449,13 @@ class _BpmDialState extends State<BpmDial> with TickerProviderStateMixin {
   }
 
   void _handleCenterTap() {
+    if (widget.alignMode) {
+      final handler = widget.onAlignTap;
+      if (handler != null) {
+        unawaited(handler());
+      }
+      return;
+    }
     unawaited(HapticFeedback.lightImpact());
     _tapFlashController.forward(from: 0);
     widget.onTapTempo();

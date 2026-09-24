@@ -101,7 +101,13 @@ class MetronomeEngine(
         var beatIndex = 0
         var cycleCount = 0
         var subdivisionIndex = 0
-        var nextTickNanos = SystemClock.elapsedRealtimeNanos() + WARMUP_NANOS
+        val now = SystemClock.elapsedRealtimeNanos()
+        val phaseAnchor = configRef.get().phaseAnchorNanos
+        // Tap 对拍锚点：若锚点仍在有效期内，从锚点所在的下一拍起算，
+        // 让节拍落点与用户跟随的歌曲拍点对齐；否则回退到即时起算。
+        val initialAnchorNanos = phaseAnchor
+            ?.let { anchorTickNanos(it, configRef.get().bpm, now) }
+        var nextTickNanos = initialAnchorNanos ?: (now + WARMUP_NANOS)
 
         while (running.get()) {
             val config = configRef.get()
@@ -168,6 +174,36 @@ class MetronomeEngine(
                 nextTickNanos = SystemClock.elapsedRealtimeNanos() + intervalNanos
             }
         }
+    }
+
+    /**
+     * 把 Tap 对拍锚点换算成首个 tick 的绝对时间。
+     *
+     * 用户最后一次 tap 落在歌曲的一个拍点上，节拍器从该点再往后推一个完整
+     * 节拍周期，即歌曲的下一拍。锚点过期（超过两拍才轮到）时返回 null。
+     */
+    private fun anchorTickNanos(
+        anchorNanos: Long,
+        bpm: Int,
+        nowNanos: Long,
+    ): Long? {
+        if (anchorNanos <= 0L) {
+            return null
+        }
+        val beatIntervalNanos =
+            (SECONDS_TO_NANOS_PER_MINUTE / bpm.coerceAtLeast(1)).roundToLong()
+        var tick = anchorNanos + beatIntervalNanos
+        // 锚点来自过去；若下一拍也已经过去，按周期向后滚动到当前时间之后。
+        if (tick <= nowNanos) {
+            val behind = nowNanos - tick
+            val periods = behind / beatIntervalNanos + 1
+            tick += periods * beatIntervalNanos
+        }
+        // 超过两拍才轮到，说明锚点基本失效，回退即时起算，避免相位漂移过大。
+        if (tick - nowNanos > beatIntervalNanos * 2) {
+            return null
+        }
+        return tick
     }
 
     private fun waitPrecisely(targetNanos: Long) {

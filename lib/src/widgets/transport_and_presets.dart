@@ -72,6 +72,10 @@ class _BpmDialWithPresetActions extends StatelessWidget {
     required this.onTapTempo,
     required this.onSave,
     required this.onLoad,
+    required this.alignMode,
+    required this.alignReady,
+    required this.onToggleAlignMode,
+    required this.onAlignTap,
   });
 
   final int bpm;
@@ -84,6 +88,10 @@ class _BpmDialWithPresetActions extends StatelessWidget {
   final VoidCallback onTapTempo;
   final VoidCallback onSave;
   final VoidCallback onLoad;
+  final bool alignMode;
+  final bool alignReady;
+  final VoidCallback onToggleAlignMode;
+  final Future<void> Function() onAlignTap;
 
   @override
   Widget build(BuildContext context) {
@@ -104,6 +112,10 @@ class _BpmDialWithPresetActions extends StatelessWidget {
             size: size,
             onChanged: onChanged,
             onTapTempo: onTapTempo,
+            alignMode: alignMode,
+            alignReady: alignReady,
+            onToggleAlignMode: onToggleAlignMode,
+            onAlignTap: onAlignTap,
           ),
           Positioned(
             left: 0,

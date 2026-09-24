@@ -207,7 +207,12 @@ const List<TimeSignature> kTimeSignatures = [
   TimeSignature(label: '3/4', beatsPerBar: 3, caption: 'Waltz flow'),
   TimeSignature(label: '4/4', beatsPerBar: 4, caption: 'Daily practice'),
   TimeSignature(label: '5/4', beatsPerBar: 5, caption: 'Odd-meter drive'),
-  TimeSignature(label: '6/8', beatsPerBar: 6, caption: 'Compound groove'),
+  TimeSignature(
+    label: '6/8',
+    beatsPerBar: 6,
+    noteValue: 8,
+    caption: 'Compound groove',
+  ),
 ];
 
 List<BeatType> _defaultBeatPattern(int beatsPerBar) {
@@ -351,6 +356,12 @@ enum VoiceMode {
   final String label;
   final String caption;
 
+  String get zhLabel => switch (this) {
+    VoiceMode.off => '关闭',
+    VoiceMode.english => '英文',
+    VoiceMode.chinese => '中文',
+  };
+
   static VoiceMode fromToken(String token) {
     for (final mode in values) {
       if (mode.token == token) {
@@ -406,6 +417,13 @@ enum SoundProfile {
   final Color color;
   final IconData icon;
 
+  String get zhLabel => switch (this) {
+    SoundProfile.accent => '重音',
+    SoundProfile.mechanical => '机械',
+    SoundProfile.electronic => '电子',
+    SoundProfile.wood => '木质',
+  };
+
   static SoundProfile fromToken(String token) {
     for (final profile in values) {
       if (profile.token == token) {
@@ -430,6 +448,7 @@ class MetronomeConfig {
     required this.subdivisionType,
     required this.beatTypes,
     required this.beatRhythmTypes,
+    this.phaseAnchorNanos,
   });
 
   final int bpm;
@@ -444,6 +463,10 @@ class MetronomeConfig {
   final List<String> beatTypes;
   final List<String> beatRhythmTypes;
 
+  /// Tap 对拍相位锚点（原生 elapsedRealtimeNanos 时钟域）。
+  /// 为空表示普通即时起算；Start 时只消费一次。
+  final int? phaseAnchorNanos;
+
   Map<String, dynamic> toMap() {
     return {
       'bpm': bpm,
@@ -457,6 +480,7 @@ class MetronomeConfig {
       'subdivisionType': subdivisionType,
       'beatTypes': beatTypes,
       'beatRhythmTypes': beatRhythmTypes,
+      if (phaseAnchorNanos != null) 'phaseAnchorNanos': phaseAnchorNanos,
     };
   }
 
@@ -481,6 +505,7 @@ class MetronomeConfig {
               ?.map((value) => value.toString())
               .toList() ??
           const [],
+      phaseAnchorNanos: (map['phaseAnchorNanos'] as num?)?.toInt(),
     );
   }
 }
@@ -578,10 +603,10 @@ class TunerReading {
 
   String get centsText {
     if (cents.abs() < 0.5) {
-      return '0 cents';
+      return '0 音分';
     }
     final sign = cents > 0 ? '+' : '';
-    return '$sign${cents.toStringAsFixed(0)} cents';
+    return '$sign${cents.toStringAsFixed(0)} 音分';
   }
 }
 
@@ -694,6 +719,22 @@ class MetronomeBridge {
 
   Future<bool> requestMicrophonePermission() async {
     return _invokeBool('requestMicrophonePermission');
+  }
+
+  /// 读取原生 elapsedRealtimeNanos，用于把 Flutter 时间戳映射到原生时钟域。
+  /// 返回 (anchorNativeNanos, anchorFlutterMicros)，读取失败返回 null。
+  Future<({int nativeNanos, int flutterMicros})?> syncClock() async {
+    try {
+      final result = await _controlChannel.invokeMethod<int>('syncClock');
+      if (result == null || result <= 0) {
+        return null;
+      }
+      return (nativeNanos: result, flutterMicros: DateTime.now().microsecondsSinceEpoch);
+    } on MissingPluginException {
+      return null;
+    } on PlatformException {
+      return null;
+    }
   }
 
   Future<bool> _invokeBool(

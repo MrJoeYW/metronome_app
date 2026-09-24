@@ -11,8 +11,8 @@ void main() {
 
     expect(find.text('Start'), findsOneWidget);
     expect(find.text('5/4'), findsOneWidget);
-    expect(find.text('Wood'), findsOneWidget);
-    expect(find.text('Dev'), findsOneWidget);
+    expect(find.text('木质'), findsOneWidget);
+    expect(find.text('调音'), findsOneWidget);
     expect(find.text('--'), findsOneWidget);
     expect(find.text('Community'), findsOneWidget);
     expect(find.text('\u8282\u62cd\u5668'), findsOneWidget);
@@ -41,6 +41,7 @@ void main() {
     expect(find.text('Meter wheels'), findsOneWidget);
     expect(find.text('Quick meters'), findsOneWidget);
     expect(find.text('Apply'), findsOneWidget);
+    expect(find.text('Current meter'), findsNothing);
   });
 
   testWidgets('Beat pattern cells cycle type on tap', (
@@ -94,6 +95,43 @@ void main() {
     expect(config.toMap()['beatTypes'], contains('rest'));
     expect(config.toMap()['beatRhythmTypes'], contains('eighth_pair'));
     expect(BeatRhythmType.fromToken('eighth'), BeatRhythmType.eighthPair);
+  });
+
+  test('Metronome config omits phase anchor unless aligned', () {
+    const base = MetronomeConfig(
+      bpm: 120,
+      beatsPerBar: 4,
+      noteValue: 4,
+      timeSignature: '4/4',
+      accentSound: 'accent',
+      regularSound: 'wood',
+      vocalMode: 'off',
+      accentHaptics: true,
+      subdivisionType: 0,
+      beatTypes: ['accent', 'light', 'light', 'light'],
+      beatRhythmTypes: ['quarter', 'quarter', 'quarter', 'quarter'],
+    );
+    expect(base.toMap().containsKey('phaseAnchorNanos'), isFalse);
+
+    final aligned = MetronomeConfig(
+      bpm: base.bpm,
+      beatsPerBar: base.beatsPerBar,
+      noteValue: base.noteValue,
+      timeSignature: base.timeSignature,
+      accentSound: base.accentSound,
+      regularSound: base.regularSound,
+      vocalMode: base.vocalMode,
+      accentHaptics: base.accentHaptics,
+      subdivisionType: base.subdivisionType,
+      beatTypes: base.beatTypes,
+      beatRhythmTypes: base.beatRhythmTypes,
+      phaseAnchorNanos: 123456789,
+    );
+    expect(aligned.toMap()['phaseAnchorNanos'], 123456789);
+    expect(
+      MetronomeConfig.fromMap(aligned.toMap()).phaseAnchorNanos,
+      123456789,
+    );
   });
 
   testWidgets('Bpm dial outer ring responds to drag', (

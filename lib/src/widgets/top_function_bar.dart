@@ -28,7 +28,7 @@ class TopFunctionBar extends StatelessWidget {
       children: [
         Expanded(
           child: FunctionButton(
-            label: 'Meter',
+            label: '拍号',
             value: signatureLabel,
             icon: Icons.grid_4x4_rounded,
             accent: AppPalette.secondary,
@@ -38,7 +38,7 @@ class TopFunctionBar extends StatelessWidget {
         const SizedBox(width: 8),
         Expanded(
           child: FunctionButton(
-            label: 'Tone',
+            label: '音色',
             value: soundLabel,
             icon: Icons.graphic_eq_rounded,
             accent: AppPalette.primary,
@@ -48,8 +48,8 @@ class TopFunctionBar extends StatelessWidget {
         const SizedBox(width: 8),
         Expanded(
           child: FunctionButton(
-            label: 'Tuner',
-            value: 'Dev',
+            label: '调音器',
+            value: '调音',
             icon: Icons.tune_rounded,
             accent: const Color(0xFF7AD7A8),
             onTap: onTunerTap,
@@ -58,7 +58,7 @@ class TopFunctionBar extends StatelessWidget {
         const SizedBox(width: 8),
         Expanded(
           child: FunctionButton(
-            label: 'Timer',
+            label: '定时',
             value: timerLabel ?? '--',
             icon: Icons.timer_rounded,
             accent: const Color(0xFFFF7A90),

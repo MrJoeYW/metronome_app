@@ -238,31 +238,49 @@ class _PracticeCalendarPanelState extends State<_PracticeCalendarPanel> {
             ],
           ),
           const SizedBox(height: 10),
-          const _CalendarWeekdayHeader(),
-          const SizedBox(height: 8),
-          SizedBox(
-            height: 258,
-            child: PageView.builder(
-              controller: _pageController,
-              onPageChanged: (page) {
-                setState(() {
-                  _visibleMonth = _addMonths(
-                    DateTime.now(),
-                    page - _initialMonthPage,
-                  );
-                });
-              },
-              itemBuilder: (context, page) {
-                final month = _addMonths(
-                  DateTime.now(),
-                  page - _initialMonthPage,
-                );
-                return _PracticeMonthGrid(
-                  month: DateTime(month.year, month.month),
-                  summaryByDay: summaryByDay,
-                  onDayTap: (date) => _showDayDialog(context, date),
-                );
-              },
+          Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 460),
+              child: Column(
+                children: [
+                  const _CalendarWeekdayHeader(),
+                  const SizedBox(height: 8),
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      const spacing = 6.0;
+                      const rows = 6.0;
+                      final cellWidth = (constraints.maxWidth - spacing * 6) / 7;
+                      final cellHeight = cellWidth / 0.88;
+                      final gridHeight = cellHeight * rows + spacing * (rows - 1);
+                      return SizedBox(
+                        height: gridHeight,
+                        child: PageView.builder(
+                          controller: _pageController,
+                          onPageChanged: (page) {
+                            setState(() {
+                              _visibleMonth = _addMonths(
+                                DateTime.now(),
+                                page - _initialMonthPage,
+                              );
+                            });
+                          },
+                          itemBuilder: (context, page) {
+                            final month = _addMonths(
+                              DateTime.now(),
+                              page - _initialMonthPage,
+                            );
+                            return _PracticeMonthGrid(
+                              month: DateTime(month.year, month.month),
+                              summaryByDay: summaryByDay,
+                              onDayTap: (date) => _showDayDialog(context, date),
+                            );
+                          },
+                        ),
+                      );
+                    },
+                  ),
+                ],
+              ),
             ),
           ),
           const SizedBox(height: 12),

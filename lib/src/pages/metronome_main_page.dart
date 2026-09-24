@@ -17,6 +17,8 @@ class _MetronomeMainPageState extends State<MetronomeMainPage>
   static const Duration _tapTempoTimeout = Duration(seconds: 2);
   static const int _tapTempoWindowSize = 6;
   static const double _tapTempoOutlierTolerance = 0.30;
+  /// 对齐 tap 后多久内 Start 才消费相位锚点，过期回退即时起算。
+  static const Duration _alignmentHoldWindow = Duration(seconds: 2);
 
   final MetronomeBridge _bridge = const MetronomeBridge();
   final MetronomeDatabase _database = MetronomeDatabase.instance;
@@ -68,8 +70,22 @@ class _MetronomeMainPageState extends State<MetronomeMainPage>
   List<SavedMetronomePreset> _savedPresets = const [];
   String _webPageUrl = kDefaultWebPageUrl;
 
+  // Tap 对拍对齐：中心区长按在普通/对齐模式间切换。
+  bool _alignMode = false;
+  final TapTempoTracker _alignTempoTracker = TapTempoTracker(
+    windowSize: _tapTempoWindowSize,
+    timeout: _tapTempoTimeout,
+    outlierTolerance: _tapTempoOutlierTolerance,
+  );
+  DateTime? _lastAlignTapAt;
+
+  /// 最近一次时钟同步样本：(原生纳秒, Flutter 微秒)。
+  ({int nativeNanos, int flutterMicros})? _clockSync;
+
   /// 当前 Flutter 配置快照，MethodChannel start/configure 都使用它。
-  MetronomeConfig get _config => MetronomeConfig(
+  ///
+  /// [phaseAnchorNanos] 仅 Start 时传入，把 Tap 对拍相位锚点下发一次。
+  MetronomeConfig _buildConfig({int? phaseAnchorNanos}) => MetronomeConfig(
     bpm: _bpm,
     beatsPerBar: _signature.beatsPerBar,
     noteValue: _signature.noteValue,
@@ -81,7 +97,10 @@ class _MetronomeMainPageState extends State<MetronomeMainPage>
     subdivisionType: _subdivision.id,
     beatTypes: _beatPattern.map((type) => type.token).toList(),
     beatRhythmTypes: _beatRhythms.map((type) => type.token).toList(),
+    phaseAnchorNanos: phaseAnchorNanos,
   );
+
+  MetronomeConfig get _config => _buildConfig();
 
   /// 最近一次设置快照，用于 App 下次打开时恢复常用配置。
   PersistedSettings get _settingsSnapshot => PersistedSettings(
@@ -461,8 +480,9 @@ class _MetronomeMainPageState extends State<MetronomeMainPage>
       _isTransportBusy = true;
     });
 
+    final anchor = shouldStart ? await _resolvePhaseAnchor() : null;
     final ok = shouldStart
-        ? await _bridge.start(_config)
+        ? await _bridge.start(_buildConfig(phaseAnchorNanos: anchor))
         : await _bridge.stop();
 
     if (!mounted) {
@@ -517,6 +537,64 @@ class _MetronomeMainPageState extends State<MetronomeMainPage>
     }
 
     await _updateBpm(bpm, resetTapTempoBuffer: false);
+  }
+
+  /// 长按圆盘中心切换普通/对齐模式，不弹窗。
+  void _toggleAlignMode() {
+    HapticFeedback.mediumImpact();
+    final entering = !_alignMode;
+    setState(() {
+      _alignMode = entering;
+      _lastAlignTapAt = null;
+      _alignTempoTracker.reset();
+    });
+    if (entering) {
+      unawaited(_refreshClockSync());
+    }
+  }
+
+  Future<void> _refreshClockSync() async {
+    final sync = await _bridge.syncClock();
+    if (!mounted || sync == null) {
+      return;
+    }
+    _clockSync = sync;
+  }
+
+  /// 对齐模式下，中心区点击跟随歌曲拍点，记录最后一次 tap 时间与 BPM。
+  Future<void> _handleAlignTap() async {
+    final now = DateTime.now();
+    final update = _alignTempoTracker.registerTap(now);
+    setState(() {
+      _lastAlignTapAt = now;
+    });
+    HapticFeedback.selectionClick();
+    if (update.bpm != null) {
+      await _updateBpm(update.bpm!, resetTapTempoBuffer: false);
+    }
+  }
+
+  /// 把最近一次对齐 tap 的 Flutter 时间戳映射到原生 elapsedRealtimeNanos。
+  ///
+  /// 超过有效期返回 null，让原生层回退即时起算，避免相位过期漂移。
+  Future<int?> _resolvePhaseAnchor() async {
+    final tapAt = _lastAlignTapAt;
+    if (!_alignMode || tapAt == null) {
+      return null;
+    }
+    if (DateTime.now().difference(tapAt) > _alignmentHoldWindow) {
+      return null;
+    }
+
+    final sync = _clockSync ?? await _bridge.syncClock();
+    if (sync == null) {
+      return null;
+    }
+    _clockSync = sync;
+    // 以同步样本为基准，把 tap 时刻换算到原生时钟域。
+    final baseMicros = sync.flutterMicros;
+    final deltaMicros = tapAt.microsecondsSinceEpoch - baseMicros;
+    return sync.nativeNanos + deltaMicros * 1000;
   }
 
   Future<void> _updateSignature(TimeSignature signature) async {
@@ -937,7 +1015,7 @@ class _MetronomeMainPageState extends State<MetronomeMainPage>
                         children: [
                           TopFunctionBar(
                             signatureLabel: _signature.label,
-                            soundLabel: _regularSound.label,
+                            soundLabel: _regularSound.zhLabel,
                             timerLabel: _timerEnabled
                                 ? _formatTimerDuration(_timerRemaining)
                                 : null,
@@ -967,6 +1045,14 @@ class _MetronomeMainPageState extends State<MetronomeMainPage>
                             pulseAmount: pulse,
                             size: dialSize,
                             canLoad: _savedPresets.isNotEmpty,
+                            alignMode: _alignMode,
+                            alignReady:
+                                _alignMode &&
+                                _lastAlignTapAt != null &&
+                                DateTime.now().difference(_lastAlignTapAt!) <=
+                                    _alignmentHoldWindow,
+                            onToggleAlignMode: _toggleAlignMode,
+                            onAlignTap: _handleAlignTap,
                             onChanged: (value) =>
                                 _updateBpm(value, resetTapTempoBuffer: true),
                             onTapTempo: () => unawaited(_handleTapTempo()),
