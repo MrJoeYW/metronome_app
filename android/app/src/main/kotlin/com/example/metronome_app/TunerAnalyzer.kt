@@ -5,7 +5,6 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.content.pm.PackageManager
 import android.media.AudioFormat
-import android.media.AudioManager
 import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.os.Handler
@@ -17,10 +16,15 @@ import kotlin.math.abs
 import kotlin.math.sqrt
 
 /**
- * 简单实时调音器分析器。
+ * 实时调音器分析器。
  *
- * 使用 AudioRecord 读取麦克风 PCM，并用归一化自相关估算单音基频。
- * 目标是先提供真实输入与稳定 UI 状态流转，后续可替换为更强的 YIN/MPM 算法。
+ * 使用 AudioRecord 读取麦克风 PCM，并用 YIN 算法估算单音基频。
+ * YIN 的累积均值归一化差值函数比普通自相关更不容易出现八度误判，
+ * 对吉他这类富含谐波的信号也更稳定。
+ *
+ * 注意：这里刻意使用 [MediaRecorder.AudioSource.MIC]，不使用 UNPROCESSED。
+ * 部分机型会声称支持 UNPROCESSED，但实际录到的信号增益异常或接近静音，
+ * 反而让调音器看起来“没反应”。
  */
 class TunerAnalyzer(
     context: Context,
@@ -57,7 +61,7 @@ class TunerAnalyzer(
 
         val bufferSize = maxOf(minBuffer * 2, ANALYSIS_SIZE * 2)
         audioRecord = AudioRecord(
-            preferredAudioSource(),
+            MediaRecorder.AudioSource.MIC,
             SAMPLE_RATE,
             AudioFormat.CHANNEL_IN_MONO,
             AudioFormat.ENCODING_PCM_16BIT,
@@ -132,7 +136,19 @@ class TunerAnalyzer(
         }
     }
 
+    /**
+     * YIN 基频检测。
+     *
+     * 1. 去直流后计算差值函数 d(tau)
+     * 2. 转成累积均值归一化差值 d'(tau)
+     * 3. 取第一个低于阈值的局部极小作为周期
+     * 4. 抛物线插值细化周期并换算频率
+     */
     private fun analyze(samples: ShortArray, length: Int): PitchResult? {
+        if (length < MIN_ANALYSIS_LENGTH) {
+            return null
+        }
+
         val values = DoubleArray(length)
         var mean = 0.0
         for (i in 0 until length) {
@@ -152,117 +168,90 @@ class TunerAnalyzer(
             return null
         }
 
-        val minLag = SAMPLE_RATE / MAX_FREQUENCY
-        val maxLag = SAMPLE_RATE / MIN_FREQUENCY
-        var bestLag = -1
-        var bestCorrelation = 0.0
-
-        for (lag in minLag..maxLag) {
-            var correlation = 0.0
-            var energyA = 0.0
-            var energyB = 0.0
-            val limit = length - lag
-            for (i in 0 until limit) {
-                val a = values[i]
-                val b = values[i + lag]
-                correlation += a * b
-                energyA += a * a
-                energyB += b * b
-            }
-
-            val denominator = sqrt(energyA * energyB)
-            if (denominator <= 0.0) {
-                continue
-            }
-
-            val normalized = correlation / denominator
-            if (normalized > bestCorrelation) {
-                bestCorrelation = normalized
-                bestLag = lag
-            }
-        }
-
-        if (bestLag <= 0) {
+        val minLag = (SAMPLE_RATE / MAX_FREQUENCY).coerceAtLeast(1)
+        val maxLag = minOf(length - 1, SAMPLE_RATE / MIN_FREQUENCY)
+        if (maxLag <= minLag) {
             return null
         }
 
-        // 自相关天生偏向最小 lag（高频），先做一次更严格的清晰度校验。
-        // 若峰值不够强，再按清晰度 > 0.5 的最大 lag 取音高，降低八度误判。
-        var chosenLag = bestLag
-        if (bestCorrelation < MIN_CLARITY) {
-            var fallbackLag = -1
-            var fallbackCorrelation = 0.0
-            for (lag in minLag..maxLag) {
-                val normalized = normalizedCorrelationAt(values, length, lag)
-                if (normalized >= LOW_CLARITY && normalized >= fallbackCorrelation) {
-                    fallbackCorrelation = normalized
-                    fallbackLag = lag
-                }
+        // 差值函数 d(tau)。
+        val difference = DoubleArray(maxLag + 1)
+        for (tau in 1..maxLag) {
+            var sum = 0.0
+            val limit = length - tau
+            for (i in 0 until limit) {
+                val delta = values[i] - values[i + tau]
+                sum += delta * delta
             }
-            if (fallbackLag <= 0) {
-                return null
-            }
-            chosenLag = fallbackLag
-            bestCorrelation = fallbackCorrelation
+            difference[tau] = sum
         }
 
-        val refinedLag = refineLag(values, length, chosenLag)
-        val frequency = SAMPLE_RATE / refinedLag
+        // 累积均值归一化差值 d'(tau)。
+        val normalized = DoubleArray(maxLag + 1)
+        normalized[0] = 1.0
+        var runningSum = 0.0
+        for (tau in 1..maxLag) {
+            runningSum += difference[tau]
+            normalized[tau] = if (runningSum > 1e-12) {
+                difference[tau] * tau / runningSum
+            } else {
+                1.0
+            }
+        }
+
+        // 第一个低于阈值的局部极小。
+        var bestTau = -1
+        for (tau in minLag..maxLag) {
+            if (normalized[tau] < YIN_THRESHOLD) {
+                var local = tau
+                while (local + 1 <= maxLag && normalized[local + 1] < normalized[local]) {
+                    local += 1
+                }
+                bestTau = local
+                break
+            }
+        }
+
+        // 没有明显低谷时退回全局最小，但要求足够可信，避免把噪声当音高。
+        if (bestTau <= 0) {
+            var minValue = Double.MAX_VALUE
+            var minTau = -1
+            for (tau in minLag..maxLag) {
+                if (normalized[tau] < minValue) {
+                    minValue = normalized[tau]
+                    minTau = tau
+                }
+            }
+            if (minTau <= 0 || minValue > YIN_FALLBACK_THRESHOLD) {
+                return null
+            }
+            bestTau = minTau
+        }
+
+        var refinedTau = bestTau.toDouble()
+        if (bestTau in 1 until maxLag) {
+            val previous = normalized[bestTau - 1]
+            val center = normalized[bestTau]
+            val next = normalized[bestTau + 1]
+            val denominator = 2.0 * (2.0 * center - next - previous)
+            if (abs(denominator) > 1e-9) {
+                refinedTau = bestTau + (next - previous) / denominator
+            }
+        }
+        if (refinedTau <= 0.0) {
+            return null
+        }
+
+        val frequency = SAMPLE_RATE / refinedTau
         if (frequency < MIN_FREQUENCY || frequency > MAX_FREQUENCY) {
             return null
         }
 
         return PitchResult(
             frequency = frequency,
-            clarity = bestCorrelation,
+            clarity = (1.0 - normalized[bestTau]).coerceIn(0.0, 1.0),
             rms = rms,
         )
-    }
-
-    private fun normalizedCorrelationAt(
-        values: DoubleArray,
-        length: Int,
-        lag: Int,
-    ): Double {
-        var correlation = 0.0
-        var energyA = 0.0
-        var energyB = 0.0
-        val limit = length - lag
-        for (i in 0 until limit) {
-            val a = values[i]
-            val b = values[i + lag]
-            correlation += a * b
-            energyA += a * a
-            energyB += b * b
-        }
-        val denominator = sqrt(energyA * energyB)
-        if (denominator <= 0.0) {
-            return 0.0
-        }
-        return correlation / denominator
-    }
-
-    private fun refineLag(values: DoubleArray, length: Int, lag: Int): Double {
-        val previous = correlationAt(values, length, lag - 1)
-        val center = correlationAt(values, length, lag)
-        val next = correlationAt(values, length, lag + 1)
-        val denominator = previous - 2 * center + next
-        if (abs(denominator) < 1e-9) {
-            return lag.toDouble()
-        }
-        return lag + 0.5 * (previous - next) / denominator
-    }
-
-    private fun correlationAt(values: DoubleArray, length: Int, lag: Int): Double {
-        if (lag <= 0 || lag >= length) {
-            return 0.0
-        }
-        var correlation = 0.0
-        val limit = length - lag
-        for (i in 0 until limit) {
-            correlation += values[i] * values[i + lag]
-        }
-        return correlation
     }
 
     private fun emit(event: Map<String, Any>) {
@@ -278,32 +267,16 @@ class TunerAnalyzer(
         ) == PackageManager.PERMISSION_GRANTED
     }
 
-    private fun preferredAudioSource(): Int {
-        return if (hasUnprocessedAudioSource()) {
-            MediaRecorder.AudioSource.UNPROCESSED
-        } else {
-            MediaRecorder.AudioSource.MIC
-        }
-    }
-
-    private fun hasUnprocessedAudioSource(): Boolean {
-        val audioManager = appContext.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
-            ?: return false
-        return audioManager.getProperty(PROPERTY_SUPPORT_AUDIO_SOURCE_UNPROCESSED)?.toBoolean()
-            ?: false
-    }
-
     companion object {
         private const val SAMPLE_RATE = 44100
         private const val ANALYSIS_SIZE = 4096
-        private const val ANALYSIS_INTERVAL_MS = 70L
+        private const val ANALYSIS_INTERVAL_MS = 20L
+        private const val MIN_ANALYSIS_LENGTH = 1024
         private const val MIN_FREQUENCY = 60
         private const val MAX_FREQUENCY = 1200
-        private const val MIN_RMS = 0.006
-        private const val MIN_CLARITY = 0.55
-        private const val LOW_CLARITY = 0.50
-        private const val PROPERTY_SUPPORT_AUDIO_SOURCE_UNPROCESSED =
-            "android.media.property.SUPPORT_AUDIO_SOURCE_UNPROCESSED"
+        private const val MIN_RMS = 0.004
+        private const val YIN_THRESHOLD = 0.15
+        private const val YIN_FALLBACK_THRESHOLD = 0.30
     }
 }
 

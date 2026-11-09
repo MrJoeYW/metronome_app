@@ -295,5 +295,12 @@ kotlin.caching.enabled=false
 - `lib/src/widgets/bpm_dial.dart`: 圆盘中心按钮新增 `onLongPress`，长按在普通/对齐两种模式间**直接切换、不弹窗**。对齐模式下中心区改为 Tap 对拍：点击跟随歌曲拍点；中心提示由 `TAP TEMPO` 变为“跟歌点拍 / 已对齐 N”，边框与文字在就绪时转绿。`_BpmDialWithPresetActions` 透传 `alignMode / alignReady / onToggleAlignMode / onAlignTap`。
 - `lib/src/pages/metronome_main_page.dart`: 新增对齐模式状态 `_alignMode`、`_lastAlignTapAt`、对齐专用 `TapTempoTracker` 与 `_clockSync`。`_toggleAlignMode` 长按切换并刷新时钟同步；`_handleAlignTap` 记录每次 tap 时间并同步 BPM；`_resolvePhaseAnchor` 在 Start 时把最后一次 tap 映射到原生时钟域，超过 2 秒有效期返回 null 回退即时起算。所有播放入口仍走同一 `_setPlayback`。
 
-后续可继续做的：调音器灵敏度优化本轮未改动；节拍器与后台音乐共存依赖系统多应用发声策略，未改音频焦点。
+后续可继续做的：节拍器与后台音乐共存依赖系统多应用发声策略，未改音频焦点。
+
+## 2026-04-26 Tuner Regression Fix (YIN)
+
+- 背景：上一轮把调音器音源切到 `AudioSource.UNPROCESSED` 后，部分机型（如小米）虽然报告支持该音源，但实际录到的信号增益异常或接近静音，导致调音器“完全没有反应”，比优化前更差。
+- `android/app/src/main/kotlin/com/example/metronome_app/TunerAnalyzer.kt`: 音源固定回 `MediaRecorder.AudioSource.MIC`，移除 `UNPROCESSED`/`AudioManager` 探测逻辑。检测算法从普通归一化自相关替换为 **YIN**：去直流 → 差值函数 `d(tau)` → 累积均值归一化 `d'(tau)` → 取第一个低于阈值的局部极小 → 抛物线插值。相比自相关更不易出现八度误判，也去掉了原来可能选到大 lag 的错误兜底。
+- 参数调整：`MIN_RMS` 0.006 → 0.004（更容易起振），`YIN_THRESHOLD` 0.15，`YIN_FALLBACK_THRESHOLD` 0.30；分析间隔 70ms → 20ms，刷新更快。
+- 事件契约不变（`status / frequency / clarity / rms`），Flutter 侧 UI 与 `syncClock` 对齐功能不受影响。
 
